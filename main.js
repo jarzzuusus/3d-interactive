@@ -296,6 +296,29 @@ toggleSoundBtn.addEventListener("click", () => {
   toggleSoundBtn.textContent = `Sound: ${soundEnabled ? "ON" : "OFF"}`;
 });
 
+// ----------------------------------------------------------
+// Main render loop
+// ----------------------------------------------------------
+function renderLoop() {
+  requestAnimationFrame(renderLoop);
+
+  const now = performance.now();
+  
+  // Run hand tracking detection
+  tracker.detectFrame(now);
+
+  // Update and render 3D scene
+  sceneManager.update();
+
+  // FPS counter
+  frameCount++;
+  if (now - fpsTimer >= 1000) {
+    fpsLabel.textContent = frameCount;
+    frameCount = 0;
+    fpsTimer = now;
+  }
+}
+
 async function startApp() {
   try {
     startOverlay.classList.add("hidden");
