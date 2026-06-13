@@ -1,17 +1,22 @@
 // ============================================================
-// particleSystem.js
-// Core point-cloud "object" made of thousands of glowing
-// particles. Handles:
-//  - Idle floating / noise-based motion
-//  - Destruction (scatter -> hold -> reassemble) physics
-//  - Velocity, drag, turbulence
-// Plus a lightweight ambient background particle field.
+// particleSystem.js  (reworked)
+//
+// Behaviour:
+//  - Default: particles scattered randomly across the scene,
+//    drifting with slow wind-like turbulence.
+//  - Hand detected: each particle is pulled toward a sphere
+//    formation around the hand position with a wind/fluid delay —
+//    particles on the "wake" side lag behind, creating an organic
+//    comet/tail effect.
+//  - Hand removed: particles drift back to scattered positions.
+//  - Destruction gesture: explode outward, then scatter.
+//
+// Visual style: plain 3D points, no over-blooming.
 // ============================================================
 
 import * as THREE from "three";
 
-// Cheap trig-based 3D "noise" — no external noise lib needed,
-// stays GPU/CPU friendly even at thousands of particles.
+// Simple deterministic pseudo-noise using trig.
 function noise3(x, y, z, t) {
   return (
     Math.sin(x * 1.7 + t) * Math.cos(y * 1.3 - t * 0.7) +
@@ -20,85 +25,104 @@ function noise3(x, y, z, t) {
   ) / 3;
 }
 
-/**
- * The main interactive object: a glowing point cloud shaped like
- * a sphere/orb, built from a Fibonacci sphere distribution so the
- * particles are evenly spread with no clumping.
- */
+// Smooth easing
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
 export class ParticleObject {
-  constructor(scene, count = 7000) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {number} count  Total particle count (recommend 3000–5000)
+   */
+  constructor(scene, count = 4000) {
     this.scene = scene;
     this.count = count;
+    this.time = 0;
 
-    // states: idle -> scattering -> hold -> reassembling -> idle
-    this.state = "idle";
-    this.stateTime = 0;
-    this.scatterDuration = 1.0;
-    this.holdDuration = 0.6;
-    this.reassembleDuration = 1.6;
+    // ── Interaction state ──────────────────────────────────────
+    // "scattered"  : drifting randomly (no hand)
+    // "gathering"  : hand detected, pulling toward sphere
+    // "gathered"   : hand present, holding sphere formation
+    // "releasing"  : hand lost, smoothly scattering back
+    // "exploding"  : destruction gesture
+    this.interactionState = "scattered";
+    this.handPos = new THREE.Vector3(0, 0, 0);       // current hand world pos
+    this.prevHandPos = new THREE.Vector3(0, 0, 0);   // previous frame hand pos
+    this.handVelocity = new THREE.Vector3(0, 0, 0);  // smoothed hand motion
+    this.handPresent = false;
+    this.gatherTime = 0;
 
-    const positions = new Float32Array(count * 3);
-    const original = new Float32Array(count * 3);
-    const velocities = new Float32Array(count * 3);
-    const phase = new Float32Array(count);
-    const colors = new Float32Array(count * 3);
-    const sizes = new Float32Array(count);
+    // ── Per-particle data ──────────────────────────────────────
+    const positions   = new Float32Array(count * 3);  // current world positions
+    const scattered   = new Float32Array(count * 3);  // home scatter positions
+    const sphereOff   = new Float32Array(count * 3);  // offset inside the sphere
+    const velocities  = new Float32Array(count * 3);  // physics velocity
+    const phase       = new Float32Array(count);      // random phase per particle
+    const lag         = new Float32Array(count);      // 0–1: how "fast" it follows (tail effect)
+    const colors      = new Float32Array(count * 3);
 
-    const colorA = new THREE.Color(0x00f0ff);
-    const colorB = new THREE.Color(0x7c4dff);
-    const colorC = new THREE.Color(0xff2bd6);
+    // Colour palette — subtle, not neon
+    const colA = new THREE.Color(0x94c8e8); // soft sky blue
+    const colB = new THREE.Color(0xb8a4e0); // muted lavender
+    const colC = new THREE.Color(0xe8c4d8); // light rose
 
     for (let i = 0; i < count; i++) {
-      // Fibonacci sphere distribution
+      // Random scatter position over a large volume
+      const sx = (Math.random() - 0.5) * 20;
+      const sy = (Math.random() - 0.5) * 14;
+      const sz = (Math.random() - 0.5) * 10;
+      scattered[i * 3]     = sx;
+      scattered[i * 3 + 1] = sy;
+      scattered[i * 3 + 2] = sz;
+
+      positions[i * 3]     = sx;
+      positions[i * 3 + 1] = sy;
+      positions[i * 3 + 2] = sz;
+
+      // Target offset inside the sphere (Fibonacci distribution)
       const idx = i + 0.5;
-      const phi = Math.acos(1 - 2 * idx / count);
+      const phi   = Math.acos(1 - 2 * idx / count);
       const theta = Math.PI * (1 + Math.sqrt(5)) * idx;
-
-      // Most particles on a "shell", a few scattered inside for depth/glow
-      const shell = 1.35 + (Math.random() - 0.5) * 0.3;
-      const r = Math.random() < 0.12 ? Math.random() * 1.25 : shell;
-
-      const x = r * Math.sin(phi) * Math.cos(theta);
-      const y = r * Math.sin(phi) * Math.sin(theta);
-      const z = r * Math.cos(phi);
-
-      positions[i * 3] = x;
-      positions[i * 3 + 1] = y;
-      positions[i * 3 + 2] = z;
-
-      original[i * 3] = x;
-      original[i * 3 + 1] = y;
-      original[i * 3 + 2] = z;
+      const r = 1.2 + (Math.random() - 0.5) * 0.35;
+      sphereOff[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+      sphereOff[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      sphereOff[i * 3 + 2] = r * Math.cos(phi);
 
       phase[i] = Math.random() * Math.PI * 2;
-      sizes[i] = 0.018 + Math.random() * 0.035;
+
+      // Lag: 0.0 = slowest (tail) … 1.0 = fastest (lead)
+      // Gives different particles different inertia → organic tail
+      lag[i] = 0.15 + Math.random() * 0.85;
 
       const mix = Math.random();
-      const c =
-        mix < 0.5
-          ? colorA.clone().lerp(colorB, mix * 2)
-          : colorB.clone().lerp(colorC, (mix - 0.5) * 2);
-      colors[i * 3] = c.r;
+      const c = mix < 0.5
+        ? colA.clone().lerp(colB, mix * 2)
+        : colB.clone().lerp(colC, (mix - 0.5) * 2);
+      colors[i * 3]     = c.r;
       colors[i * 3 + 1] = c.g;
       colors[i * 3 + 2] = c.b;
     }
 
-    this.positions = positions;
-    this.original = original;
+    this.positions  = positions;
+    this.scattered  = scattered;
+    this.sphereOff  = sphereOff;
     this.velocities = velocities;
-    this.phase = phase;
+    this.phase      = phase;
+    this.lag        = lag;
 
+    // ── Three.js geometry & material ──────────────────────────
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
+    geometry.setAttribute("color",    new THREE.BufferAttribute(colors, 3));
 
     const material = new THREE.PointsMaterial({
-      size: 0.045,
+      size: 0.055,
       vertexColors: true,
       transparent: true,
-      opacity: 0.95,
-      blending: THREE.AdditiveBlending,
+      opacity: 0.82,
+      // Normal blending — no over-glow
+      blending: THREE.NormalBlending,
       depthWrite: false,
       sizeAttenuation: true,
     });
@@ -106,180 +130,219 @@ export class ParticleObject {
     this.points = new THREE.Points(geometry, material);
     this.points.frustumCulled = false;
     scene.add(this.points);
-
-    // Glow trail behind the moving group (a faint shadow cloud)
-    const trailGeo = new THREE.BufferGeometry();
-    const trailCount = 24;
-    this.trailPositions = new Float32Array(trailCount * 3);
-    trailGeo.setAttribute("position", new THREE.BufferAttribute(this.trailPositions, 3));
-    const trailMat = new THREE.PointsMaterial({
-      color: 0x66ddff,
-      size: 0.3,
-      transparent: true,
-      opacity: 0.08,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    this.trail = new THREE.Points(trailGeo, trailMat);
-    this.trailCount = trailCount;
-    this.trailHead = 0;
-    this.trailFilled = 0;
-    scene.add(this.trail);
-
-    this.time = 0;
   }
 
-  /**
-   * Explode the point cloud outward with velocity + randomness.
-   * Safe to call repeatedly — ignored while already animating.
-   */
-  triggerDestruction() {
-    if (this.state !== "idle") return;
-    this.state = "scattering";
-    this.stateTime = 0;
+  // ── Public API ──────────────────────────────────────────────
 
-    for (let i = 0; i < this.count; i++) {
-      const dir = new THREE.Vector3(
-        this.original[i * 3],
-        this.original[i * 3 + 1],
-        this.original[i * 3 + 2]
-      );
-      if (dir.lengthSq() < 0.0001) {
-        dir.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
-      }
-      dir.normalize();
+  /** Called by SceneManager when hand tracking gives a new position */
+  setHandTarget(position) {
+    this.prevHandPos.copy(this.handPos);
+    this.handPos.copy(position);
 
-      const speed = 2.2 + Math.random() * 4.5;
-      this.velocities[i * 3] = dir.x * speed + (Math.random() - 0.5) * 1.5;
-      this.velocities[i * 3 + 1] = dir.y * speed + (Math.random() - 0.5) * 1.5;
-      this.velocities[i * 3 + 2] = dir.z * speed + (Math.random() - 0.5) * 1.5;
+    // Smooth hand velocity estimate (used to offset sphere → tail effect)
+    const rawVel = new THREE.Vector3().subVectors(position, this.prevHandPos);
+    this.handVelocity.lerp(rawVel, 0.18); // low-pass filter
+
+    if (!this.handPresent) {
+      this.handPresent = true;
+      this.gatherTime = 0;
+      this.interactionState = "gathering";
     }
   }
 
-  _addTrailPoint(pos) {
-    const idx = this.trailHead * 3;
-    this.trailPositions[idx] = pos.x;
-    this.trailPositions[idx + 1] = pos.y;
-    this.trailPositions[idx + 2] = pos.z;
-    this.trailHead = (this.trailHead + 1) % this.trailCount;
-    this.trailFilled = Math.min(this.trailFilled + 1, this.trailCount);
-    this.trail.geometry.attributes.position.needsUpdate = true;
-    this.trail.geometry.setDrawRange(0, this.trailFilled);
+  /** Called when hand is lost */
+  clearHand() {
+    if (this.handPresent) {
+      this.handPresent = false;
+      this.interactionState = "releasing";
+    }
+  }
+
+  /** Destruction gesture */
+  triggerDestruction() {
+    if (this.interactionState === "exploding") return;
+    this.interactionState = "exploding";
+    this._explode();
+  }
+
+  // ── Internal ────────────────────────────────────────────────
+
+  _explode() {
+    const pos = this.positions;
+    for (let i = 0; i < this.count; i++) {
+      // Explode away from current position
+      const vx = (Math.random() - 0.5);
+      const vy = (Math.random() - 0.5);
+      const vz = (Math.random() - 0.5);
+      const len = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+      const spd = 4 + Math.random() * 6;
+      this.velocities[i * 3]     = (vx / len) * spd;
+      this.velocities[i * 3 + 1] = (vy / len) * spd;
+      this.velocities[i * 3 + 2] = (vz / len) * spd;
+    }
   }
 
   update(delta) {
     this.time += delta;
     const pos = this.positions;
+    const t   = this.time;
 
-    if (this.state === "idle") {
-      // Slow organic float + noise drift around the resting shape
+    // Decay hand velocity each frame
+    this.handVelocity.multiplyScalar(0.88);
+
+    if (this.interactionState === "gathering" || this.interactionState === "gathered") {
+      this.gatherTime += delta;
+      if (this.gatherTime > 0.6) this.interactionState = "gathered";
+
+      // Global gather progress 0→1 (first 0.6s ramps up)
+      const gatherProg = Math.min(this.gatherTime / 0.6, 1.0);
+
+      // How far the hand moved this frame → used to stretch the tail
+      const speed = this.handVelocity.length();
+      // Tail direction: opposite of hand velocity
+      const tailDir = this.handVelocity.clone().normalize().negate();
+
       for (let i = 0; i < this.count; i++) {
-        const t = this.time * 0.6 + this.phase[i];
-        const ox = this.original[i * 3];
-        const oy = this.original[i * 3 + 1];
-        const oz = this.original[i * 3 + 2];
+        const ph = this.phase[i];
+        const lagFactor = this.lag[i]; // fast particles: lag≈1, slow/tail: lag≈0
 
-        const nx = noise3(ox, oy, oz, t) * 0.06;
-        const ny = noise3(oy, oz, ox, t * 1.1) * 0.06;
-        const nz = noise3(oz, ox, oy, t * 0.9) * 0.06;
+        // Target = hand position + sphere offset + wind noise displacement
+        const ox = this.sphereOff[i * 3];
+        const oy = this.sphereOff[i * 3 + 1];
+        const oz = this.sphereOff[i * 3 + 2];
 
-        pos[i * 3] = ox + nx + Math.sin(t) * 0.02;
-        pos[i * 3 + 1] = oy + ny + Math.cos(t * 0.8) * 0.02;
-        pos[i * 3 + 2] = oz + nz;
+        // Small breathing noise so sphere isn't perfectly static
+        const breathe = 0.12;
+        const nx = noise3(ox, oy, oz, t * 0.5 + ph) * breathe;
+        const ny = noise3(oy, oz, ox, t * 0.5 + ph) * breathe;
+        const nz = noise3(oz, ox, oy, t * 0.5 + ph) * breathe;
+
+        // Tail stretch: slow particles are pushed further "behind" the motion
+        const tailStretch = speed * (1.0 - lagFactor) * 2.8;
+        const tx = this.handPos.x + ox + nx + tailDir.x * tailStretch;
+        const ty = this.handPos.y + oy + ny + tailDir.y * tailStretch;
+        const tz = this.handPos.z + oz + nz + tailDir.z * tailStretch;
+
+        // Per-particle follow speed: fast ones catch up quickly,
+        // slow ones (tail) drift lazily — feels like wind
+        const followK = (0.8 + lagFactor * 3.5) * gatherProg;
+
+        pos[i * 3]     += (tx - pos[i * 3])     * Math.min(1, followK * delta);
+        pos[i * 3 + 1] += (ty - pos[i * 3 + 1]) * Math.min(1, followK * delta);
+        pos[i * 3 + 2] += (tz - pos[i * 3 + 2]) * Math.min(1, followK * delta);
       }
-    } else if (this.state === "scattering") {
-      this.stateTime += delta;
-      const turb = 0.6;
+
+    } else if (this.interactionState === "releasing") {
+      // Drift back toward scatter positions with wind turbulence
       for (let i = 0; i < this.count; i++) {
-        const t = this.time * 1.5 + this.phase[i];
+        const ph  = this.phase[i];
+        const lag = this.lag[i];
 
-        this.velocities[i * 3] += noise3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2], t) * turb * delta;
-        this.velocities[i * 3 + 1] += noise3(pos[i * 3 + 1], pos[i * 3 + 2], pos[i * 3], t * 1.2) * turb * delta;
-        this.velocities[i * 3 + 2] += noise3(pos[i * 3 + 2], pos[i * 3], pos[i * 3 + 1], t * 0.8) * turb * delta;
+        const sx = this.scattered[i * 3];
+        const sy = this.scattered[i * 3 + 1];
+        const sz = this.scattered[i * 3 + 2];
 
-        const drag = 0.96;
-        this.velocities[i * 3] *= drag;
+        // Noise offset on the home position for organic drift
+        const wobble = 0.5;
+        const wx = noise3(sx, sy, sz, t * 0.4 + ph) * wobble;
+        const wy = noise3(sy, sz, sx, t * 0.4 + ph) * wobble;
+        const wz = noise3(sz, sx, sy, t * 0.4 + ph) * wobble;
+
+        const tx = sx + wx;
+        const ty = sy + wy;
+        const tz = sz + wz;
+
+        // Slow, wind-like release — lag controls how long each particle
+        // takes to fully scatter again
+        const releaseK = (0.3 + lag * 1.0) * 0.8;
+
+        pos[i * 3]     += (tx - pos[i * 3])     * Math.min(1, releaseK * delta);
+        pos[i * 3 + 1] += (ty - pos[i * 3 + 1]) * Math.min(1, releaseK * delta);
+        pos[i * 3 + 2] += (tz - pos[i * 3 + 2]) * Math.min(1, releaseK * delta);
+      }
+
+      // Once close enough to scatter pos, switch to idle scattered state
+      let settled = true;
+      for (let i = 0; i < 20; i++) {
+        const idx = Math.floor(Math.random() * this.count);
+        const dx = pos[idx * 3] - this.scattered[idx * 3];
+        const dy = pos[idx * 3 + 1] - this.scattered[idx * 3 + 1];
+        if (dx * dx + dy * dy > 0.25) { settled = false; break; }
+      }
+      if (settled) this.interactionState = "scattered";
+
+    } else if (this.interactionState === "scattered") {
+      // Slow wind-like drift around home scatter positions
+      for (let i = 0; i < this.count; i++) {
+        const ph = this.phase[i];
+        const sx = this.scattered[i * 3];
+        const sy = this.scattered[i * 3 + 1];
+        const sz = this.scattered[i * 3 + 2];
+
+        const amp = 0.3;
+        const spd = 0.25;
+        const nx = noise3(sx, sy, sz, t * spd + ph) * amp;
+        const ny = noise3(sy, sz, sx, t * spd + ph) * amp;
+        const nz = noise3(sz, sx, sy, t * spd + ph) * amp;
+
+        // Soft lerp so motion is smooth, not teleporting
+        pos[i * 3]     += (sx + nx - pos[i * 3])     * Math.min(1, 1.5 * delta);
+        pos[i * 3 + 1] += (sy + ny - pos[i * 3 + 1]) * Math.min(1, 1.5 * delta);
+        pos[i * 3 + 2] += (sz + nz - pos[i * 3 + 2]) * Math.min(1, 1.5 * delta);
+      }
+
+    } else if (this.interactionState === "exploding") {
+      let allFar = true;
+      for (let i = 0; i < this.count; i++) {
+        const drag = 0.94;
+        this.velocities[i * 3]     *= drag;
         this.velocities[i * 3 + 1] *= drag;
         this.velocities[i * 3 + 2] *= drag;
 
-        pos[i * 3] += this.velocities[i * 3] * delta;
+        pos[i * 3]     += this.velocities[i * 3]     * delta;
         pos[i * 3 + 1] += this.velocities[i * 3 + 1] * delta;
         pos[i * 3 + 2] += this.velocities[i * 3 + 2] * delta;
-      }
-      if (this.stateTime >= this.scatterDuration) {
-        this.state = "hold";
-        this.stateTime = 0;
-      }
-    } else if (this.state === "hold") {
-      this.stateTime += delta;
-      for (let i = 0; i < this.count; i++) {
-        const t = this.time * 0.8 + this.phase[i];
-        pos[i * 3] += Math.sin(t) * 0.003;
-        pos[i * 3 + 1] += Math.cos(t * 1.1) * 0.003;
-        pos[i * 3 + 2] += Math.sin(t * 0.7) * 0.003;
-      }
-      if (this.stateTime >= this.holdDuration) {
-        this.state = "reassembling";
-        this.stateTime = 0;
-      }
-    } else if (this.state === "reassembling") {
-      this.stateTime += delta;
-      const t = Math.min(this.stateTime / this.reassembleDuration, 1);
-      const pull = 1 - Math.pow(1 - t, 3);
 
-      for (let i = 0; i < this.count; i++) {
-        pos[i * 3] += (this.original[i * 3] - pos[i * 3]) * pull * delta * 4;
-        pos[i * 3 + 1] += (this.original[i * 3 + 1] - pos[i * 3 + 1]) * pull * delta * 4;
-        pos[i * 3 + 2] += (this.original[i * 3 + 2] - pos[i * 3 + 2]) * pull * delta * 4;
+        const vLen = Math.abs(this.velocities[i * 3]) + Math.abs(this.velocities[i * 3 + 1]);
+        if (vLen > 0.05) allFar = false;
       }
-
-      if (t >= 1) {
-        this.state = "idle";
-        this.stateTime = 0;
-        pos.set(this.original);
+      // After explosion settles, release back to scatter
+      if (allFar) {
+        this.interactionState = "releasing";
+        this.handPresent = false;
       }
     }
 
     this.points.geometry.attributes.position.needsUpdate = true;
-
-    // Update glow trail every few frames based on group position
-    this._trailTimer = (this._trailTimer || 0) + delta;
-    if (this._trailTimer > 0.05) {
-      this._trailTimer = 0;
-      this._addTrailPoint(this.points.position);
-    }
   }
 }
 
-/**
- * Ambient background particle field — gives the scene depth and a
- * "drifting through space" feeling. Cheap: simple upward drift + wrap.
- */
+// ── Ambient background particles ───────────────────────────────
 export class AmbientParticles {
-  constructor(scene, count = 500) {
+  constructor(scene, count = 300) {
     this.scene = scene;
     this.count = count;
 
-    const geometry = new THREE.BufferGeometry();
+    const geometry  = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
-    const speeds = new Float32Array(count);
+    const speeds    = new Float32Array(count);
 
     for (let i = 0; i < count; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 30;
-      positions[i * 3 + 1] = (Math.random() - 0.5) * 30;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 30;
-      speeds[i] = 0.05 + Math.random() * 0.15;
+      positions[i * 3]     = (Math.random() - 0.5) * 30;
+      positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 15;
+      speeds[i] = 0.04 + Math.random() * 0.1;
     }
 
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     this.speeds = speeds;
 
     const material = new THREE.PointsMaterial({
-      color: 0x66ddff,
-      size: 0.05,
+      color: 0x8899bb,
+      size: 0.04,
       transparent: true,
-      opacity: 0.4,
-      blending: THREE.AdditiveBlending,
+      opacity: 0.3,
+      blending: THREE.NormalBlending,
       depthWrite: false,
     });
 
@@ -291,7 +354,7 @@ export class AmbientParticles {
     const positions = this.points.geometry.attributes.position.array;
     for (let i = 0; i < this.count; i++) {
       positions[i * 3 + 1] += this.speeds[i] * delta;
-      if (positions[i * 3 + 1] > 15) positions[i * 3 + 1] = -15;
+      if (positions[i * 3 + 1] > 10) positions[i * 3 + 1] = -10;
     }
     this.points.geometry.attributes.position.needsUpdate = true;
   }

@@ -1,31 +1,27 @@
 // ============================================================
-// threeScene.js
-// Sets up the Three.js scene, camera, renderer, lighting,
-// background, post-processing (bloom + afterimage), the
-// particle-based object, ambient particles, holographic text,
-// and cinematic effects. Exposes setHandTarget for smooth,
-// inertia-based hand-follow.
+// threeScene.js  (reworked for new particle system)
+// Sets up Three.js scene, camera, renderer, lighting,
+// post-processing (lighter bloom), and wires the new
+// ParticleObject / AmbientParticles system.
 // ============================================================
 
 import * as THREE from "three";
-import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { EffectComposer }  from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass }      from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { OutputPass }      from "three/addons/postprocessing/OutputPass.js";
 
 import { ParticleObject, AmbientParticles } from "./particleSystem.js";
-import { TextSystem } from "./textSystem.js";
-import { Effects } from "./effects.js";
+import { TextSystem }  from "./textSystem.js";
+import { Effects }     from "./effects.js";
 
 export class SceneManager {
   constructor(container) {
     this.container = container;
-    this.clock = new THREE.Clock();
+    this.clock     = new THREE.Clock();
 
-    // Hand-follow target + spring state
-    this.targetPosition = new THREE.Vector3(0, 0, 0);
-    this.velocity = new THREE.Vector3(0, 0, 0);
-    this.targetRotation = new THREE.Euler(0, 0, 0);
+    // Current hand position in world space (set by main.js)
+    this._handWorldPos = new THREE.Vector3(0, 0, 0);
 
     this._initRenderer();
     this._initScene();
@@ -37,7 +33,8 @@ export class SceneManager {
     window.addEventListener("resize", () => this._handleResize());
   }
 
-  // ----------------------------------------------------------
+  // ── Init ──────────────────────────────────────────────────
+
   _initRenderer() {
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -46,19 +43,19 @@ export class SceneManager {
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.toneMappingExposure = 1.0;
     this.container.appendChild(this.renderer.domElement);
   }
 
   _initScene() {
     this.scene = new THREE.Scene();
 
-    // Dark futuristic gradient background sphere
+    // Subtle gradient background
     const bgGeo = new THREE.SphereGeometry(50, 32, 32);
     const bgMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       uniforms: {
-        topColor: { value: new THREE.Color(0x0a0e2a) },
+        topColor:    { value: new THREE.Color(0x0a0e2a) },
         bottomColor: { value: new THREE.Color(0x000005) },
       },
       vertexShader: `
@@ -82,40 +79,42 @@ export class SceneManager {
     this.scene.add(new THREE.Mesh(bgGeo, bgMat));
 
     this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-    this.camera.position.set(0, 0, 6);
+    this.camera.position.set(0, 0, 8);
   }
 
   _initLights() {
-    this.scene.add(new THREE.AmbientLight(0x88aaff, 0.5));
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(4, 6, 5);
-    this.scene.add(dirLight);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+    dir.position.set(4, 6, 5);
+    this.scene.add(dir);
 
-    this.pinkLight = new THREE.PointLight(0xff2bd6, 2, 12);
-    this.pinkLight.position.set(-3, 1, 3);
-    this.scene.add(this.pinkLight);
+    // Subtle coloured fills — kept dim so particles read as plain 3D
+    const fill1 = new THREE.PointLight(0x8888ff, 0.6, 20);
+    fill1.position.set(-4, 2, 4);
+    this.scene.add(fill1);
 
-    const cyanLight = new THREE.PointLight(0x00f0ff, 1.5, 12);
-    cyanLight.position.set(3, -1, 3);
-    this.scene.add(cyanLight);
+    const fill2 = new THREE.PointLight(0xffaacc, 0.4, 20);
+    fill2.position.set(4, -2, 4);
+    this.scene.add(fill2);
   }
 
   _initObjects() {
-    this.particleObject = new ParticleObject(this.scene, 7000);
-    this.ambientParticles = new AmbientParticles(this.scene, 500);
-    this.textSystem = new TextSystem(this.scene);
+    this.particleObject  = new ParticleObject(this.scene, 4000);
+    this.ambientParticles = new AmbientParticles(this.scene, 300);
+    this.textSystem      = new TextSystem(this.scene);
   }
 
   _initPostProcessing() {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
+    // Much lighter bloom — just a soft glow halo, not full neon
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      1.25, // strength — strong bloom for the glowing particles
-      0.7,  // radius
-      0.08  // threshold
+      0.35,  // strength  ← was 1.25
+      0.5,   // radius
+      0.6    // threshold ← was 0.08 (higher = fewer things bloom)
     );
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
@@ -133,71 +132,39 @@ export class SceneManager {
     this.bloomPass.setSize(w, h);
   }
 
-  // ----------------------------------------------------------
-  // Hand-follow target. Actual motion is spring-damped in update()
-  // so movement feels natural with inertia and no jitter.
-  // ----------------------------------------------------------
-  setHandTarget(position, rotation) {
-    this.targetPosition.copy(position);
-    this.targetRotation.copy(rotation);
+  // ── Hand tracking API ─────────────────────────────────────
+
+  setHandTarget(position /*, rotation */) {
+    this._handWorldPos.copy(position);
+    this.particleObject.setHandTarget(position);
   }
 
   clearHandTarget() {
-    // Drift gently back toward center when no hand is detected
-    this.targetPosition.lerp(new THREE.Vector3(0, 0, 0), 0.01);
+    this.particleObject.clearHand();
   }
 
-  // ----------------------------------------------------------
-  // Gesture-driven actions
-  // ----------------------------------------------------------
+  // ── Gesture actions ───────────────────────────────────────
+
   triggerDestruction() {
     this.particleObject.triggerDestruction();
-    this.effects.triggerShake(0.45, 0.7);
-    this.effects.triggerBloomBoost(2.0, 1.2);
-    this.effects.triggerMotionBlur(1.0);
+    this.effects.triggerShake(0.3, 0.5);
+    this.effects.triggerBloomBoost(0.6, 0.8);
   }
 
-  spawnText() {
-    this.textSystem.spawn();
-  }
-  removeText() {
-    this.textSystem.remove();
-  }
-  changeText() {
-    this.textSystem.changeText();
-  }
+  spawnText()  { this.textSystem.spawn(); }
+  removeText() { this.textSystem.remove(); }
+  changeText() { this.textSystem.changeText(); }
 
-  // ----------------------------------------------------------
+  // ── Render loop ───────────────────────────────────────────
+
   update() {
     const delta = Math.min(this.clock.getDelta(), 0.05);
-    const group = this.particleObject.points;
 
-    // --- Spring-damped follow (critically-damped-ish spring) ---
-    const springK = 18; // stiffness
-    const damping = 8; // damping
-
-    const accel = new THREE.Vector3()
-      .subVectors(this.targetPosition, group.position)
-      .multiplyScalar(springK);
-    accel.addScaledVector(this.velocity, -damping);
-
-    this.velocity.addScaledVector(accel, delta);
-    group.position.addScaledVector(this.velocity, delta);
-
-    // Mirror the group's transform onto the trail/ring helpers via
-    // particleObject.update -> trail; text system follows group position.
-
-    // --- Smooth rotation follow ---
-    const targetQuat = new THREE.Quaternion().setFromEuler(this.targetRotation);
-    group.quaternion.slerp(targetQuat, 1 - Math.pow(0.0001, delta));
-
-    // --- Updates ---
     this.particleObject.update(delta);
     this.ambientParticles.update(delta);
-    this.textSystem.update(delta, group.position);
+    this.textSystem.update(delta, this._handWorldPos);
     this.effects.update(delta);
 
-    // --- Render ---
     this.composer.render();
   }
 }
