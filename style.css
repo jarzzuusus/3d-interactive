@@ -1,0 +1,353 @@
+/* ============================================================
+   HANDVERSE 3D — Futuristic Stylesheet
+   ============================================================ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --primary: #00f0ff;
+  --secondary: #ff2bd6;
+  --accent: #7c4dff;
+  --bg-dark: #05060f;
+  --glass: rgba(15, 20, 40, 0.45);
+  --glass-border: rgba(0, 240, 255, 0.25);
+  --text: #e6f7ff;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  background: radial-gradient(ellipse at center, #0a0e1f 0%, #05060f 70%, #000 100%);
+  color: var(--text);
+}
+
+/* Three.js renderer container fills the screen behind the HUD */
+#scene-container {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+#scene-container canvas {
+  display: block;
+}
+
+/* ============================================================
+   HUD Layer — sits above the 3D canvas, pointer-events disabled
+   except for interactive elements
+   ============================================================ */
+.hud {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.hud-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 24px 32px;
+}
+
+.logo {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 4px;
+  text-shadow: 0 0 12px var(--primary);
+}
+.logo span {
+  color: var(--secondary);
+  text-shadow: 0 0 12px var(--secondary);
+}
+
+/* Status panel */
+.status-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 12px 18px;
+  backdrop-filter: blur(10px);
+  font-size: 0.85rem;
+  min-width: 160px;
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.08);
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-item .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #555;
+  box-shadow: 0 0 6px #555;
+  transition: all 0.3s ease;
+}
+
+.status-item.active .dot {
+  background: #00ff9d;
+  box-shadow: 0 0 10px #00ff9d, 0 0 20px #00ff9d;
+}
+
+#gesture-label, #fps-label {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* ============================================================
+   Hologram text (Hello! on wave gesture)
+   ============================================================ */
+.hologram-text {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.8);
+  font-size: 4rem;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: var(--primary);
+  text-shadow:
+    0 0 10px var(--primary),
+    0 0 30px var(--primary),
+    0 0 60px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  text-transform: uppercase;
+}
+
+.hologram-text.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* ============================================================
+   Controls bottom-left
+   ============================================================ */
+.controls {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: all;
+}
+
+.ctrl-btn {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+  letter-spacing: 1px;
+}
+
+.ctrl-btn:hover {
+  background: rgba(0, 240, 255, 0.15);
+  box-shadow: 0 0 12px var(--primary);
+}
+
+/* ============================================================
+   Webcam preview box — bottom right
+   ============================================================ */
+.webcam-box {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  width: 220px;
+  height: 165px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 0 25px rgba(0, 240, 255, 0.25);
+  background: #000;
+  pointer-events: all;
+}
+
+#webcam {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* mirror for natural interaction */
+}
+
+#debug-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  transform: scaleX(-1);
+  pointer-events: none;
+}
+
+.webcam-label {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 0.65rem;
+  letter-spacing: 2px;
+  background: rgba(255, 0, 60, 0.7);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+/* ============================================================
+   Loading overlay
+   ============================================================ */
+.loading-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: #05060f;
+  z-index: 100;
+  pointer-events: all;
+  transition: opacity 0.6s ease;
+}
+
+.loading-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loader-ring {
+  width: 64px;
+  height: 64px;
+  border: 4px solid rgba(0, 240, 255, 0.15);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  box-shadow: 0 0 20px var(--primary);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+#loading-text {
+  font-size: 0.9rem;
+  letter-spacing: 2px;
+  color: var(--primary);
+}
+
+/* ============================================================
+   Start overlay (tap-to-start, required for iOS camera permission)
+   ============================================================ */
+.start-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #05060f;
+  z-index: 150;
+  pointer-events: all;
+  transition: opacity 0.5s ease;
+}
+
+.start-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.start-box {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 40px;
+}
+
+.start-box p {
+  max-width: 320px;
+  font-size: 0.9rem;
+  opacity: 0.75;
+  line-height: 1.5;
+}
+
+.start-btn {
+  font-size: 1rem;
+  padding: 12px 36px;
+  border-color: var(--primary);
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
+}
+
+/* ============================================================
+   Error overlay
+   ============================================================ */
+.error-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 6, 15, 0.92);
+  z-index: 200;
+  pointer-events: all;
+}
+
+.error-overlay.hidden {
+  display: none;
+}
+
+.error-box {
+  background: var(--glass);
+  border: 1px solid rgba(255, 50, 80, 0.4);
+  border-radius: 14px;
+  padding: 32px 40px;
+  text-align: center;
+  box-shadow: 0 0 30px rgba(255, 50, 80, 0.3);
+}
+
+.error-box h2 {
+  color: #ff5570;
+  margin-bottom: 12px;
+}
+
+.error-box p {
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 768px) {
+  .logo { font-size: 1.1rem; }
+  .status-panel { font-size: 0.7rem; min-width: 120px; padding: 8px 12px; }
+  .hologram-text { font-size: 2.2rem; letter-spacing: 3px; }
+  .webcam-box { width: 140px; height: 105px; }
+  .controls { bottom: 16px; left: 16px; }
+  .ctrl-btn { font-size: 0.7rem; padding: 6px 10px; }
+}
