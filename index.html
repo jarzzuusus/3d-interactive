@@ -3,77 +3,62 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>HandVerse 3D — Futuristic Hand Interaction</title>
+<title>HandVerse 3D</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- 3D Canvas Container -->
   <div id="scene-container"></div>
 
-  <!-- HUD Overlay -->
   <div class="hud">
     <div class="hud-top">
       <h1 class="logo">HAND<span>VERSE</span></h1>
       <div class="status-panel">
-        <div class="status-item" id="status-camera">
-          <span class="dot"></span> Camera
-        </div>
-        <div class="status-item" id="status-hand">
-          <span class="dot"></span> Hand
-        </div>
-        <div class="status-item" id="status-gesture">
-          Gesture: <span id="gesture-label">None</span>
-        </div>
+        <div class="status-item" id="status-camera"><span class="dot"></span> Camera</div>
+        <div class="status-item" id="status-hand"><span class="dot"></span> Hand</div>
+        <div class="status-item">Gesture: <span id="gesture-label">None</span></div>
         <div class="status-item confidence-row">
           <span class="confidence-label-text">Confidence</span>
-          <div class="confidence-track">
-            <div id="confidence-bar" class="confidence-fill"></div>
-          </div>
+          <div class="confidence-track"><div id="confidence-bar" class="confidence-fill"></div></div>
           <span id="confidence-label">0%</span>
         </div>
-        <div class="status-item" id="status-fps">
-          FPS: <span id="fps-label">0</span>
-        </div>
+        <div class="status-item">FPS: <span id="fps-label">0</span></div>
       </div>
     </div>
 
-    <!-- Gesture legend -->
+    <!-- Updated gesture legend -->
     <div class="gesture-legend">
-      <div><strong>✊ → ✋ (fast)</strong> Destruction</div>
       <div><strong>✌️ Peace</strong> Spawn text</div>
       <div><strong>👍 Thumb Up</strong> Remove text</div>
-      <div><strong>🤏 Pinch</strong> Change text</div>
+      <div><strong>🤏 Pinch</strong> Restart text</div>
+      <div><strong>✋→✊ Palm→Fist</strong> Dissolve</div>
+      <div><strong>☝️ Point</strong> Next shape</div>
+      <div><strong>🤙 Call</strong> Prev shape</div>
     </div>
 
-    <!-- Controls -->
     <div class="controls">
       <button id="toggle-debug" class="ctrl-btn">Debug: OFF</button>
       <button id="toggle-sound" class="ctrl-btn">Sound: ON</button>
     </div>
 
-    <!-- Webcam preview -->
     <div class="webcam-box">
       <video id="webcam" autoplay playsinline muted></video>
       <canvas id="debug-canvas"></canvas>
       <div class="webcam-label">LIVE CAM</div>
     </div>
 
-    <!-- Loading overlay -->
     <div id="loading-overlay" class="loading-overlay hidden">
       <div class="loader-ring"></div>
       <p id="loading-text">Initializing systems...</p>
     </div>
 
-    <!-- Start screen (required for iOS Safari camera permission via user gesture) -->
     <div id="start-overlay" class="start-overlay">
       <div class="start-box">
         <h1 class="logo">HAND<span>VERSE</span></h1>
-        <p>Tap the button below to enable the camera and hand tracking.</p>
+        <p>Tap the button to enable camera and hand tracking.</p>
         <button id="start-btn" class="ctrl-btn start-btn">▶ Start</button>
       </div>
     </div>
 
-    <!-- Error overlay -->
     <div id="error-overlay" class="error-overlay hidden">
       <div class="error-box">
         <h2>⚠ Camera Error</h2>
@@ -83,8 +68,6 @@
     </div>
   </div>
 
-  <!-- Import map resolves bare "three" specifiers used internally by
-       Three.js examples/jsm modules (EffectComposer, passes, etc.) -->
   <script type="importmap">
   {
     "imports": {
