@@ -77,7 +77,16 @@
     </div>
   </div>
 
-  <!-- Main entry point as ES6 module -->
+  <!-- Import map resolves bare "three" specifiers used internally by
+       Three.js examples/jsm modules (EffectComposer, passes, etc.) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
   <script type="module" src="main.js"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@
 // UI updates (status indicators, FPS, hologram text, debug view)
 // ============================================================
 
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
+import * as THREE from "three";
 import { SceneManager } from "./threeScene.js";
 import { HandTracker } from "./handTracking.js";
 import { GestureDetector, GESTURES } from "./gestureDetector.js";

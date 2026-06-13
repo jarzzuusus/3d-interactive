@@ -6,7 +6,7 @@
 // - Hand trail particles
 // ============================================================
 
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
+import * as THREE from "three";
 
 /**
  * Ambient background particle field — gives the scene depth and
