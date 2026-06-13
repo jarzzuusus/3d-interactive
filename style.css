@@ -1,54 +1,50 @@
 /* ============================================================
-   HANDVERSE 3D — Futuristic Stylesheet
+   HANDVERSE 3D — Stylesheet v5
    ============================================================ */
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --primary: #00f0ff;
-  --secondary: #ff2bd6;
-  --accent: #7c4dff;
-  --bg-dark: #05060f;
-  --glass: rgba(15, 20, 40, 0.45);
-  --glass-border: rgba(0, 240, 255, 0.25);
-  --text: #e6f7ff;
+  --primary:      #00f0ff;
+  --secondary:    #ff2bd6;
+  --accent:       #7c4dff;
+  --bg-dark:      #05060f;
+  --glass:        rgba(15, 20, 40, 0.50);
+  --glass-border: rgba(0, 240, 255, 0.22);
+  --text:         #e6f7ff;
 }
 
 html, body {
-  width: 100%;
-  height: 100%;
+  width: 100%; height: 100%;
   overflow: hidden;
   font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  background: radial-gradient(ellipse at center, #0a0e1f 0%, #05060f 70%, #000 100%);
+  background: #05060f;
   color: var(--text);
 }
 
-/* Three.js renderer container fills the screen behind the HUD */
+/* ── Fullscreen particle background canvas ── */
+#bg-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ── Three.js scene on top of bg canvas ── */
 #scene-container {
   position: fixed;
   top: 0; left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
+  width: 100%; height: 100%;
+  z-index: 1;
 }
+#scene-container canvas { display: block; }
 
-#scene-container canvas {
-  display: block;
-}
-
-/* ============================================================
-   HUD Layer — sits above the 3D canvas, pointer-events disabled
-   except for interactive elements
-   ============================================================ */
+/* ── HUD ── */
 .hud {
   position: fixed;
   top: 0; left: 0;
-  width: 100%;
-  height: 100%;
+  width: 100%; height: 100%;
   z-index: 10;
   pointer-events: none;
 }
@@ -57,124 +53,70 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 24px 32px;
+  padding: 22px 28px;
 }
 
 .logo {
-  font-size: 1.6rem;
+  font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: 4px;
   text-shadow: 0 0 12px var(--primary);
 }
-.logo span {
-  color: var(--secondary);
-  text-shadow: 0 0 12px var(--secondary);
-}
+.logo span { color: var(--secondary); text-shadow: 0 0 12px var(--secondary); }
 
 /* Status panel */
 .status-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
   background: var(--glass);
   border: 1px solid var(--glass-border);
   border-radius: 12px;
-  padding: 12px 18px;
-  backdrop-filter: blur(10px);
-  font-size: 0.85rem;
-  min-width: 200px;
-  box-shadow: 0 0 20px rgba(0, 240, 255, 0.08);
+  padding: 10px 16px;
+  backdrop-filter: blur(12px);
+  font-size: 0.82rem;
+  min-width: 190px;
+  box-shadow: 0 0 20px rgba(0,240,255,0.06);
 }
 
-.status-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.status-item { display: flex; align-items: center; gap: 8px; }
 
 .status-item .dot {
-  width: 10px;
-  height: 10px;
+  width: 9px; height: 9px;
   border-radius: 50%;
-  background: #555;
-  box-shadow: 0 0 6px #555;
-  transition: all 0.3s ease;
+  background: #333;
+  box-shadow: 0 0 4px #333;
+  transition: all 0.3s;
+  flex-shrink: 0;
 }
-
 .status-item.active .dot {
   background: #00ff9d;
   box-shadow: 0 0 10px #00ff9d, 0 0 20px #00ff9d;
 }
 
-#gesture-label, #fps-label, #confidence-label {
-  color: var(--primary);
-  font-weight: 600;
-}
+#gesture-label, #fps-label, #confidence-label { color: var(--primary); font-weight: 600; }
 
-/* Confidence meter */
-.confidence-row {
-  gap: 6px;
-}
-.confidence-label-text {
-  font-size: 0.75rem;
-  opacity: 0.8;
-  white-space: nowrap;
-}
+.confidence-row { gap: 6px; }
+.confidence-label-text { font-size: 0.72rem; opacity: 0.75; white-space: nowrap; }
 .confidence-track {
-  flex: 1;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
+  flex: 1; height: 5px; border-radius: 3px;
+  background: rgba(255,255,255,0.07); overflow: hidden;
 }
 .confidence-fill {
-  height: 100%;
-  width: 0%;
+  height: 100%; width: 0%;
   background: linear-gradient(90deg, var(--accent), var(--primary));
-  box-shadow: 0 0 8px var(--primary);
+  box-shadow: 0 0 6px var(--primary);
   transition: width 0.1s ease-out;
 }
-#confidence-label {
-  font-size: 0.75rem;
-  min-width: 32px;
-  text-align: right;
-}
+#confidence-label { font-size: 0.72rem; min-width: 30px; text-align: right; }
 
-/* ============================================================
-   Gesture legend — top center-ish, unobtrusive
-   ============================================================ */
-.gesture-legend {
-  position: absolute;
-  top: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 18px;
-  background: var(--glass);
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  padding: 8px 18px;
-  font-size: 0.7rem;
-  letter-spacing: 0.5px;
-  backdrop-filter: blur(10px);
-  white-space: nowrap;
-  opacity: 0.85;
-}
-.gesture-legend strong {
-  color: var(--primary);
-  margin-right: 4px;
-}
-
-/* ============================================================
-   Controls bottom-left
-   ============================================================ */
+/* ── Controls bottom-left ── */
 .controls {
   position: absolute;
-  bottom: 24px;
-  left: 24px;
+  bottom: 22px; left: 22px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 9px;
   pointer-events: all;
 }
 
@@ -182,199 +124,117 @@ html, body {
   background: var(--glass);
   border: 1px solid var(--glass-border);
   color: var(--text);
-  padding: 8px 16px;
+  padding: 7px 15px;
   border-radius: 8px;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   cursor: pointer;
-  backdrop-filter: blur(8px);
-  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  transition: all 0.2s;
   letter-spacing: 1px;
 }
-
 .ctrl-btn:hover {
-  background: rgba(0, 240, 255, 0.15);
+  background: rgba(0,240,255,0.14);
   box-shadow: 0 0 12px var(--primary);
 }
+.edit-btn {
+  border-color: rgba(255,200,0,0.45);
+  color: #ffcc44;
+}
+.edit-btn:hover { box-shadow: 0 0 12px rgba(255,200,0,0.4); }
 
-/* ============================================================
-   Webcam preview box — bottom right
-   ============================================================ */
+/* ── Webcam box bottom-right ── */
 .webcam-box {
   position: absolute;
-  bottom: 24px;
-  right: 24px;
-  width: 220px;
-  height: 165px;
-  border-radius: 14px;
-  overflow: hidden;
+  bottom: 22px; right: 22px;
+  width: 210px; height: 158px;
+  border-radius: 13px; overflow: hidden;
   border: 1px solid var(--glass-border);
-  box-shadow: 0 0 25px rgba(0, 240, 255, 0.25);
+  box-shadow: 0 0 24px rgba(0,240,255,0.22);
   background: #000;
   pointer-events: all;
 }
-
 #webcam {
-  width: 100%;
-  height: 100%;
+  width: 100%; height: 100%;
   object-fit: cover;
-  transform: scaleX(-1); /* mirror for natural interaction */
+  transform: scaleX(-1);
 }
-
 #debug-canvas {
-  position: absolute;
-  top: 0; left: 0;
-  width: 100%;
-  height: 100%;
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
   transform: scaleX(-1);
   pointer-events: none;
 }
-
 .webcam-label {
-  position: absolute;
-  top: 6px;
-  left: 8px;
-  font-size: 0.65rem;
-  letter-spacing: 2px;
-  background: rgba(255, 0, 60, 0.7);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-weight: 700;
+  position: absolute; top: 5px; left: 7px;
+  font-size: 0.62rem; letter-spacing: 2px;
+  background: rgba(255,0,60,0.7);
+  padding: 2px 7px; border-radius: 4px; font-weight: 700;
 }
 
-/* ============================================================
-   Loading overlay
-   ============================================================ */
+/* ── Loading overlay ── */
 .loading-overlay {
-  position: fixed;
-  top: 0; left: 0;
+  position: fixed; top: 0; left: 0;
   width: 100%; height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 20px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 20px;
   background: #05060f;
-  z-index: 100;
-  pointer-events: all;
-  transition: opacity 0.6s ease;
+  z-index: 100; pointer-events: all;
+  transition: opacity 0.6s;
 }
-
-.loading-overlay.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
+.loading-overlay.hidden { opacity: 0; pointer-events: none; }
 
 .loader-ring {
-  width: 64px;
-  height: 64px;
-  border: 4px solid rgba(0, 240, 255, 0.15);
+  width: 60px; height: 60px;
+  border: 4px solid rgba(0,240,255,0.12);
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  box-shadow: 0 0 20px var(--primary);
+  box-shadow: 0 0 18px var(--primary);
 }
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading-text { font-size: 0.88rem; letter-spacing: 2px; color: var(--primary); }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-#loading-text {
-  font-size: 0.9rem;
-  letter-spacing: 2px;
-  color: var(--primary);
-}
-
-/* ============================================================
-   Start overlay (tap-to-start, required for iOS camera permission)
-   ============================================================ */
+/* ── Start overlay ── */
 .start-overlay {
-  position: fixed;
-  top: 0; left: 0;
+  position: fixed; top: 0; left: 0;
   width: 100%; height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   background: #05060f;
-  z-index: 150;
-  pointer-events: all;
-  transition: opacity 0.5s ease;
+  z-index: 150; pointer-events: all;
+  transition: opacity 0.5s;
 }
-
-.start-overlay.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
+.start-overlay.hidden { opacity: 0; pointer-events: none; }
 
 .start-box {
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
-  padding: 40px;
+  text-align: center; display: flex; flex-direction: column;
+  align-items: center; gap: 16px; padding: 40px;
 }
+.start-box p { max-width: 300px; font-size: 0.88rem; opacity: 0.7; line-height: 1.5; }
+.start-btn { font-size: 1rem; padding: 12px 36px; border-color: var(--primary); box-shadow: 0 0 18px rgba(0,240,255,0.28); }
 
-.start-box p {
-  max-width: 320px;
-  font-size: 0.9rem;
-  opacity: 0.75;
-  line-height: 1.5;
-}
-
-.start-btn {
-  font-size: 1rem;
-  padding: 12px 36px;
-  border-color: var(--primary);
-  box-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
-}
-
-/* ============================================================
-   Error overlay
-   ============================================================ */
+/* ── Error overlay ── */
 .error-overlay {
-  position: fixed;
-  top: 0; left: 0;
+  position: fixed; top: 0; left: 0;
   width: 100%; height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(5, 6, 15, 0.92);
-  z-index: 200;
-  pointer-events: all;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5,6,15,0.92);
+  z-index: 200; pointer-events: all;
 }
-
-.error-overlay.hidden {
-  display: none;
-}
-
+.error-overlay.hidden { display: none; }
 .error-box {
   background: var(--glass);
-  border: 1px solid rgba(255, 50, 80, 0.4);
-  border-radius: 14px;
-  padding: 32px 40px;
-  text-align: center;
-  box-shadow: 0 0 30px rgba(255, 50, 80, 0.3);
+  border: 1px solid rgba(255,50,80,0.4);
+  border-radius: 14px; padding: 30px 38px;
+  text-align: center; box-shadow: 0 0 28px rgba(255,50,80,0.28);
 }
+.error-box h2 { color: #ff5570; margin-bottom: 10px; }
+.error-box p  { margin-bottom: 14px; font-size: 0.88rem; opacity: 0.8; }
 
-.error-box h2 {
-  color: #ff5570;
-  margin-bottom: 12px;
-}
-
-.error-box p {
-  margin-bottom: 16px;
-  font-size: 0.9rem;
-  opacity: 0.8;
-}
-
-/* ============================================================
-   Responsive
-   ============================================================ */
+/* ── Responsive ── */
 @media (max-width: 768px) {
   .logo { font-size: 1.1rem; }
-  .status-panel { font-size: 0.7rem; min-width: 150px; padding: 8px 12px; }
-  .webcam-box { width: 140px; height: 105px; }
-  .controls { bottom: 16px; left: 16px; }
-  .ctrl-btn { font-size: 0.7rem; padding: 6px 10px; }
-  .gesture-legend { flex-direction: column; gap: 4px; top: 12px; font-size: 0.65rem; padding: 6px 12px; }
+  .status-panel { font-size: 0.7rem; min-width: 148px; padding: 8px 11px; }
+  .webcam-box { width: 136px; height: 102px; }
+  .controls { bottom: 14px; left: 14px; }
+  .ctrl-btn { font-size: 0.68rem; padding: 6px 10px; }
 }

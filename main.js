@@ -1,5 +1,5 @@
 // ============================================================
-// main.js  (v4 — gesture edit mode, shape-direct switching)
+// main.js  (v5 — no removeText, bg particles, improved fist)
 // ============================================================
 
 import * as THREE from "three";
@@ -7,6 +7,7 @@ import { SceneManager }                        from "./threeScene.js";
 import { HandTracker }                         from "./handTracking.js";
 import { GestureDetector, GESTURES, ACTIONS }  from "./gestureDetector.js";
 import { SHAPES, SHAPE_NAMES_DISPLAY }         from "./particleSystem.js";
+import { BgParticles }                         from "./bgParticles.js";
 
 // ── DOM ───────────────────────────────────────────────────────
 const sceneContainer  = document.getElementById("scene-container");
@@ -38,13 +39,17 @@ let soundEnabled = true;
 let frameCount   = 0;
 let fpsTimer     = performance.now();
 let lastDetect   = performance.now();
+let lastBgTime   = performance.now();
+
+// ── Background particles ──────────────────────────────────────
+const bgParticles = new BgParticles();
 
 // ── Audio ─────────────────────────────────────────────────────
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
 function playTone(freq = 660, dur = 0.12, type = "sine") {
   if (!soundEnabled) return;
-  const osc = audioCtx.createOscillator();
+  const osc  = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.type = type;
   osc.frequency.value = freq;
@@ -60,7 +65,7 @@ function playTone(freq = 660, dur = 0.12, type = "sine") {
 function playDissolveSound() {
   playTone(280, 0.3, "sine");
   setTimeout(() => playTone(180, 0.5, "sine"), 80);
-  setTimeout(() => playTone(120, 0.6, "sine"), 200);
+  setTimeout(() => playTone(110, 0.65, "sine"), 210);
 }
 
 // ── Scene + Gesture ───────────────────────────────────────────
@@ -84,8 +89,8 @@ function landmarkToRotation(hand) {
   const dx   = middleMcp.x - wrist.x;
   const dy   = middleMcp.y - wrist.y;
   const roll = Math.atan2(dy, dx) + Math.PI / 2;
-  const v1 = new THREE.Vector3(indexMcp.x - wrist.x, indexMcp.y - wrist.y, indexMcp.z - wrist.z);
-  const v2 = new THREE.Vector3(pinkyMcp.x - wrist.x, pinkyMcp.y - wrist.y, pinkyMcp.z - wrist.z);
+  const v1 = new THREE.Vector3(indexMcp.x-wrist.x, indexMcp.y-wrist.y, indexMcp.z-wrist.z);
+  const v2 = new THREE.Vector3(pinkyMcp.x-wrist.x, pinkyMcp.y-wrist.y, pinkyMcp.z-wrist.z);
   const n  = new THREE.Vector3().crossVectors(v1, v2).normalize();
   return new THREE.Euler(
     Math.atan2(n.y, n.z) * 0.4,
@@ -96,21 +101,17 @@ function landmarkToRotation(hand) {
 
 // ── Hand tracking callback ────────────────────────────────────
 const tracker = new HandTracker(videoEl, (results) => {
-  const hands  = results.landmarks;
-  const now    = performance.now();
-  const delta  = now - lastDetect;
-  lastDetect   = now;
+  const hands = results.landmarks;
+  const now   = performance.now();
+  const delta = now - lastDetect;
+  lastDetect  = now;
 
   statusHand.classList.toggle("active", hands.length > 0);
 
   for (let i = 0; i < Math.min(2, hands.length); i++) {
-    const pos = landmarkToWorld(hands[i][0]);
-    const rot = landmarkToRotation(hands[i]);
-    sceneManager.setHandTarget(pos, rot, i);
+    sceneManager.setHandTarget(landmarkToWorld(hands[i][0]), landmarkToRotation(hands[i]), i);
   }
-  for (let i = hands.length; i < 2; i++) {
-    sceneManager.clearHandTarget(i);
-  }
+  for (let i = hands.length; i < 2; i++) sceneManager.clearHandTarget(i);
 
   const result = gestureDetector.detect(hands, now, delta);
   updateGestureUI(result);
@@ -124,10 +125,6 @@ const tracker = new HandTracker(videoEl, (results) => {
   if (ev.spawnText) {
     sceneManager.spawnText();
     playTone(780, 0.15);
-  }
-  if (ev.removeText) {
-    sceneManager.removeText();
-    playTone(420, 0.12);
   }
   if (ev.changeText) {
     sceneManager.changeText();
@@ -153,8 +150,8 @@ function showShapeToast(name) {
     Object.assign(toast.style, {
       position: "fixed", top: "50%", left: "50%",
       transform: "translate(-50%,-50%)",
-      background: "rgba(15,20,40,0.75)",
-      border: "1px solid rgba(150,180,255,0.3)",
+      background: "rgba(10,15,35,0.80)",
+      border: "1px solid rgba(150,180,255,0.28)",
       borderRadius: "12px", padding: "10px 28px",
       color: "#cce4ff", fontSize: "1rem", letterSpacing: "3px",
       pointerEvents: "none", zIndex: "50",
@@ -180,21 +177,17 @@ function updateGestureUI(result) {
 
 // ── Debug ─────────────────────────────────────────────────────
 const CONNECTIONS = [
-  [0,1],[1,2],[2,3],[3,4],
-  [0,5],[5,6],[6,7],[7,8],
-  [5,9],[9,10],[10,11],[11,12],
-  [9,13],[13,14],[14,15],[15,16],
-  [13,17],[17,18],[18,19],[19,20],
-  [0,17],
+  [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],[0,17],
 ];
 
 function drawDebugLandmarks(raw) {
   debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
   if (!raw || !raw.length) return;
   const w = debugCanvas.width, h = debugCanvas.height;
-  const handColors = ["#00f0ff", "#ffaa00"];
   raw.forEach((hand, hi) => {
-    debugCtx.strokeStyle = handColors[hi] || "#fff";
+    debugCtx.strokeStyle = hi === 0 ? "#00f0ff" : "#ffaa00";
     debugCtx.lineWidth = 2;
     CONNECTIONS.forEach(([a,b]) => {
       debugCtx.beginPath();
@@ -220,7 +213,6 @@ function resizeDebugCanvas() {
 const GESTURE_EDIT_ACTIONS = [
   { key: ACTIONS.DESTRUCTION,  label: "💥 Dissolve" },
   { key: ACTIONS.SPAWN_TEXT,   label: "✏️ Spawn Text" },
-  { key: ACTIONS.REMOVE_TEXT,  label: "🗑 Remove Text" },
   { key: ACTIONS.CHANGE_TEXT,  label: "🔄 Restart Text" },
   { key: ACTIONS.SHAPE_SATURN, label: "🪐 Shape: Saturn" },
   { key: ACTIONS.SHAPE_LOVE,   label: "❤️ Shape: Love" },
@@ -228,9 +220,7 @@ const GESTURE_EDIT_ACTIONS = [
   { key: ACTIONS.SHAPE_SPHERE, label: "⚪ Shape: Sphere" },
 ];
 
-const ALL_GESTURES = Object.values(GESTURES).filter(g => g !== GESTURES.NONE);
-
-let editPanelEl = null;
+let editPanelEl   = null;
 let editModeActive = false;
 let pendingActionKey = null;
 
@@ -242,41 +232,37 @@ function buildEditPanel() {
   Object.assign(panel.style, {
     position: "fixed", top: "50%", left: "50%",
     transform: "translate(-50%, -50%)",
-    background: "rgba(5,8,22,0.92)",
-    border: "1px solid rgba(0,240,255,0.3)",
-    borderRadius: "16px",
-    padding: "24px 28px",
-    zIndex: "200",
-    minWidth: "360px",
+    background: "rgba(5,8,22,0.93)",
+    border: "1px solid rgba(0,240,255,0.28)",
+    borderRadius: "16px", padding: "22px 26px",
+    zIndex: "200", minWidth: "340px",
     color: "#e6f7ff",
     fontFamily: "'Segoe UI', Arial, sans-serif",
-    fontSize: "0.85rem",
-    boxShadow: "0 0 40px rgba(0,240,255,0.15)",
-    backdropFilter: "blur(12px)",
+    fontSize: "0.83rem",
+    boxShadow: "0 0 40px rgba(0,240,255,0.14)",
+    backdropFilter: "blur(14px)",
     pointerEvents: "all",
   });
 
   const currentMap = gestureDetector.getGestureMap();
-
-  // Invert map: action → gesture
   const actionToGesture = {};
   Object.entries(currentMap).forEach(([g, a]) => { actionToGesture[a] = g; });
 
   panel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <span style="font-size:1rem;font-weight:700;letter-spacing:2px;color:#00f0ff;">✏️ EDIT GESTURES</span>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <span style="font-size:0.95rem;font-weight:700;letter-spacing:2px;color:#00f0ff;">✏️ EDIT GESTURES</span>
       <button id="edit-close-btn" style="background:none;border:1px solid rgba(255,80,80,0.5);color:#ff5050;
-        padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8rem;">Close</button>
+        padding:3px 11px;border-radius:6px;cursor:pointer;font-size:0.78rem;">Close</button>
     </div>
-    <div style="font-size:0.72rem;opacity:0.6;margin-bottom:14px;">
-      Click an action, then perform the gesture to assign it.
+    <div style="font-size:0.7rem;opacity:0.55;margin-bottom:12px;">
+      Klik Assign → tunjukkan gesture ke kamera → ter-assign otomatis.
     </div>
     <table id="gesture-map-table" style="width:100%;border-collapse:collapse;"></table>
-    <div style="display:flex;gap:10px;margin-top:16px;">
-      <button id="edit-reset-btn" style="flex:1;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.4);
-        color:#ff8888;padding:8px;border-radius:8px;cursor:pointer;font-size:0.8rem;">Reset Defaults</button>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button id="edit-reset-btn" style="flex:1;background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.38);
+        color:#ff8888;padding:7px;border-radius:7px;cursor:pointer;font-size:0.78rem;">Reset Default</button>
     </div>
-    <div id="edit-listen-status" style="margin-top:12px;text-align:center;font-size:0.8rem;min-height:20px;color:#ffcc00;"></div>
+    <div id="edit-listen-status" style="margin-top:10px;text-align:center;font-size:0.78rem;min-height:18px;color:#ffcc00;"></div>
   `;
 
   document.body.appendChild(panel);
@@ -285,21 +271,18 @@ function buildEditPanel() {
   renderEditTable(actionToGesture);
 
   panel.querySelector("#edit-close-btn").addEventListener("click", () => {
-    panel.remove();
-    editPanelEl = null;
-    editModeActive = false;
-    pendingActionKey = null;
-    editModeBtn.textContent = "Edit Gestures";
+    panel.remove(); editPanelEl = null;
+    editModeActive = false; pendingActionKey = null;
+    editModeBtn.textContent = "✏️ Edit Gestures";
     gestureDetector.editListenCallback = null;
   });
 
   panel.querySelector("#edit-reset-btn").addEventListener("click", () => {
     gestureDetector.resetGestureMap();
-    const newMap = gestureDetector.getGestureMap();
     const newInvert = {};
-    Object.entries(newMap).forEach(([g,a]) => { newInvert[a] = g; });
+    Object.entries(gestureDetector.getGestureMap()).forEach(([g,a]) => { newInvert[a] = g; });
     renderEditTable(newInvert);
-    showListenStatus("✅ Reset to defaults");
+    showListenStatus("✅ Reset ke default");
   });
 }
 
@@ -307,48 +290,36 @@ function renderEditTable(actionToGesture) {
   const table = document.getElementById("gesture-map-table");
   if (!table) return;
   table.innerHTML = "";
-
   GESTURE_EDIT_ACTIONS.forEach(({ key, label }) => {
-    const assignedGesture = actionToGesture[key] || "—";
+    const assigned = actionToGesture[key] || "—";
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td style="padding:7px 4px;opacity:0.9;">${label}</td>
-      <td style="padding:7px 4px;color:#00f0ff;font-weight:600;text-align:center;"
-        id="cell-${key}">${assignedGesture}</td>
-      <td style="padding:7px 4px;text-align:right;">
+      <td style="padding:6px 4px;opacity:0.88;">${label}</td>
+      <td style="padding:6px 4px;color:#00f0ff;font-weight:600;text-align:center;font-size:0.78rem;"
+        id="cell-${key}">${assigned}</td>
+      <td style="padding:6px 4px;text-align:right;">
         <button data-action="${key}" class="assign-btn"
-          style="background:rgba(0,240,255,0.1);border:1px solid rgba(0,240,255,0.35);
-          color:#00f0ff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.75rem;">
+          style="background:rgba(0,240,255,0.09);border:1px solid rgba(0,240,255,0.32);
+          color:#00f0ff;padding:3px 11px;border-radius:6px;cursor:pointer;font-size:0.73rem;">
           Assign
         </button>
-      </td>
-    `;
+      </td>`;
     table.appendChild(tr);
   });
 
   table.querySelectorAll(".assign-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       pendingActionKey = btn.dataset.action;
-      showListenStatus("🎯 Show the gesture now...");
-      gestureDetector.listenForGesture((detectedGesture) => {
+      showListenStatus("🎯 Tunjukkan gesture sekarang...");
+      gestureDetector.listenForGesture((g) => {
         if (!pendingActionKey) return;
-
-        // Remove old mapping for this gesture (avoid conflicts)
-        const map = gestureDetector.getGestureMap();
-        const newMap = { ...map };
-        // Remove any action that was previously on this gesture
-        // Also remove any gesture that had this action
-        Object.keys(newMap).forEach(g => {
-          if (newMap[g] === pendingActionKey) delete newMap[g];
-        });
-        newMap[detectedGesture] = pendingActionKey;
-        gestureDetector.setGestureMap(newMap);
-
-        // Update table cell
+        const map = { ...gestureDetector.getGestureMap() };
+        Object.keys(map).forEach(k => { if (map[k] === pendingActionKey) delete map[k]; });
+        map[g] = pendingActionKey;
+        gestureDetector.setGestureMap(map);
         const cell = document.getElementById(`cell-${pendingActionKey}`);
-        if (cell) cell.textContent = detectedGesture;
-
-        showListenStatus(`✅ "${detectedGesture}" → ${GESTURE_EDIT_ACTIONS.find(a=>a.key===pendingActionKey)?.label}`);
+        if (cell) cell.textContent = g;
+        showListenStatus(`✅ ${g} → ${GESTURE_EDIT_ACTIONS.find(a=>a.key===pendingActionKey)?.label}`);
         pendingActionKey = null;
       });
     });
@@ -357,19 +328,16 @@ function renderEditTable(actionToGesture) {
 
 function showListenStatus(msg) {
   const el = document.getElementById("edit-listen-status");
-  if (el) {
-    el.textContent = msg;
-    setTimeout(() => { if (el) el.textContent = ""; }, 3000);
-  }
+  if (el) { el.textContent = msg; setTimeout(() => { if(el) el.textContent=""; }, 3000); }
 }
 
 editModeBtn.addEventListener("click", () => {
   editModeActive = !editModeActive;
   if (editModeActive) {
-    editModeBtn.textContent = "Close Edit Mode";
+    editModeBtn.textContent = "✕ Tutup Edit";
     buildEditPanel();
   } else {
-    editModeBtn.textContent = "Edit Gestures";
+    editModeBtn.textContent = "✏️ Edit Gestures";
     if (editPanelEl) { editPanelEl.remove(); editPanelEl = null; }
     pendingActionKey = null;
     gestureDetector.editListenCallback = null;
@@ -392,8 +360,13 @@ toggleSoundBtn.addEventListener("click", () => {
 function renderLoop() {
   requestAnimationFrame(renderLoop);
   const now = performance.now();
+  const dt  = (now - lastBgTime) / 1000;
+  lastBgTime = now;
+
+  bgParticles.update(dt);
   tracker.detectFrame(now);
   sceneManager.update();
+
   frameCount++;
   if (now - fpsTimer >= 1000) {
     fpsLabel.textContent = frameCount;
@@ -437,6 +410,10 @@ async function startApp() {
 let appStarted = false;
 function idleRender() {
   if (appStarted) return;
+  const now = performance.now();
+  const dt  = (now - lastBgTime) / 1000;
+  lastBgTime = now;
+  bgParticles.update(dt);
   sceneManager.update();
   requestAnimationFrame(idleRender);
 }

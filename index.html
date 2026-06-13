@@ -17,7 +17,7 @@
         <div class="status-item" id="status-hand"><span class="dot"></span> Hand</div>
         <div class="status-item">Gesture: <span id="gesture-label">None</span></div>
         <div class="status-item confidence-row">
-          <span class="confidence-label-text">Confidence</span>
+          <span class="confidence-label-text">Conf</span>
           <div class="confidence-track"><div id="confidence-bar" class="confidence-fill"></div></div>
           <span id="confidence-label">0%</span>
         </div>
@@ -25,22 +25,10 @@
       </div>
     </div>
 
-    <!-- Gesture legend — updated for new gestures -->
-    <div class="gesture-legend">
-      <div><strong>✊ Fist</strong> Dissolve</div>
-      <div><strong>✌️ Peace</strong> Spawn text</div>
-      <div><strong>👍 Thumb Up</strong> Remove text</div>
-      <div><strong>🤏 Pinch</strong> Restart text</div>
-      <div><strong>☝️ Point</strong> Saturn 🪐</div>
-      <div><strong>🤙 Call</strong> Love ❤️</div>
-      <div><strong>🤘 Rock</strong> Dragon 🐉</div>
-      <div><strong>✋ Palm</strong> Sphere ⚪</div>
-    </div>
-
     <div class="controls">
       <button id="toggle-debug" class="ctrl-btn">Debug: OFF</button>
       <button id="toggle-sound" class="ctrl-btn">Sound: ON</button>
-      <button id="toggle-edit-mode" class="ctrl-btn" style="border-color:rgba(255,200,0,0.5);color:#ffcc44;">Edit Gestures</button>
+      <button id="toggle-edit-mode" class="ctrl-btn edit-btn">✏️ Edit Gestures</button>
     </div>
 
     <div class="webcam-box">
