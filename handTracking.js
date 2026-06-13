@@ -1,7 +1,8 @@
 // ============================================================
 // handTracking.js
 // Wraps MediaPipe Hand Landmarker (Tasks Vision) for real-time
-// webcam hand tracking with smoothing.
+// webcam hand tracking with exponential-moving-average smoothing
+// to keep particle/object motion jitter-free.
 // ============================================================
 
 import {
@@ -54,7 +55,7 @@ export class HandTracker {
    */
   async startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error("getUserMedia tidak didukung di browser ini.");
+      throw new Error("getUserMedia is not supported in this browser.");
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -70,13 +71,9 @@ export class HandTracker {
 
     return new Promise((resolve, reject) => {
       this.video.onloadedmetadata = () => {
-        this.video
-          .play()
-          .then(resolve)
-          .catch(reject);
+        this.video.play().then(resolve).catch(reject);
       };
-      this.video.onerror = () =>
-        reject(new Error("Gagal memuat stream video."));
+      this.video.onerror = () => reject(new Error("Failed to load video stream."));
     });
   }
 

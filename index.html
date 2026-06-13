@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -24,24 +24,30 @@
         <div class="status-item" id="status-gesture">
           Gesture: <span id="gesture-label">None</span>
         </div>
+        <div class="status-item confidence-row">
+          <span class="confidence-label-text">Confidence</span>
+          <div class="confidence-track">
+            <div id="confidence-bar" class="confidence-fill"></div>
+          </div>
+          <span id="confidence-label">0%</span>
+        </div>
         <div class="status-item" id="status-fps">
           FPS: <span id="fps-label">0</span>
         </div>
       </div>
     </div>
 
-    <!-- Hologram text for wave gesture -->
-    <div id="hologram-text" class="hologram-text">Hello!</div>
+    <!-- Gesture legend -->
+    <div class="gesture-legend">
+      <div><strong>✊ → ✋ (fast)</strong> Destruction</div>
+      <div><strong>✌️ Peace</strong> Spawn text</div>
+      <div><strong>👍 Thumb Up</strong> Remove text</div>
+      <div><strong>🤏 Pinch</strong> Change text</div>
+    </div>
 
     <!-- Controls -->
     <div class="controls">
       <button id="toggle-debug" class="ctrl-btn">Debug: OFF</button>
-      <select id="model-select" class="ctrl-btn">
-        <option value="crystal">Crystal</option>
-        <option value="sphere">Sphere</option>
-        <option value="heart">Heart</option>
-        <option value="torusKnot">Logo (Torus Knot)</option>
-      </select>
       <button id="toggle-sound" class="ctrl-btn">Sound: ON</button>
     </div>
 
@@ -62,8 +68,8 @@
     <div id="start-overlay" class="start-overlay">
       <div class="start-box">
         <h1 class="logo">HAND<span>VERSE</span></h1>
-        <p>Tap tombol di bawah untuk mengaktifkan kamera & hand tracking.</p>
-        <button id="start-btn" class="ctrl-btn start-btn">▶ Mulai</button>
+        <p>Tap the button below to enable the camera and hand tracking.</p>
+        <button id="start-btn" class="ctrl-btn start-btn">▶ Start</button>
       </div>
     </div>
 
@@ -71,8 +77,8 @@
     <div id="error-overlay" class="error-overlay hidden">
       <div class="error-box">
         <h2>⚠ Camera Error</h2>
-        <p id="error-message">Tidak dapat mengakses kamera.</p>
-        <button id="retry-camera" class="ctrl-btn">Coba Lagi</button>
+        <p id="error-message">Could not access the camera.</p>
+        <button id="retry-camera" class="ctrl-btn">Retry</button>
       </div>
     </div>
   </div>

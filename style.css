@@ -82,7 +82,7 @@ html, body {
   padding: 12px 18px;
   backdrop-filter: blur(10px);
   font-size: 0.85rem;
-  min-width: 160px;
+  min-width: 200px;
   box-shadow: 0 0 20px rgba(0, 240, 255, 0.08);
 }
 
@@ -106,36 +106,63 @@ html, body {
   box-shadow: 0 0 10px #00ff9d, 0 0 20px #00ff9d;
 }
 
-#gesture-label, #fps-label {
+#gesture-label, #fps-label, #confidence-label {
   color: var(--primary);
   font-weight: 600;
 }
 
-/* ============================================================
-   Hologram text (Hello! on wave gesture)
-   ============================================================ */
-.hologram-text {
-  position: absolute;
-  top: 38%;
-  left: 50%;
-  transform: translate(-50%, -50%) scale(0.8);
-  font-size: 4rem;
-  font-weight: 800;
-  letter-spacing: 6px;
-  color: var(--primary);
-  text-shadow:
-    0 0 10px var(--primary),
-    0 0 30px var(--primary),
-    0 0 60px var(--accent);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.6s ease, transform 0.6s ease;
-  text-transform: uppercase;
+/* Confidence meter */
+.confidence-row {
+  gap: 6px;
+}
+.confidence-label-text {
+  font-size: 0.75rem;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+.confidence-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.confidence-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--primary));
+  box-shadow: 0 0 8px var(--primary);
+  transition: width 0.1s ease-out;
+}
+#confidence-label {
+  font-size: 0.75rem;
+  min-width: 32px;
+  text-align: right;
 }
 
-.hologram-text.show {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1);
+/* ============================================================
+   Gesture legend — top center-ish, unobtrusive
+   ============================================================ */
+.gesture-legend {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 18px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-size: 0.7rem;
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.gesture-legend strong {
+  color: var(--primary);
+  margin-right: 4px;
 }
 
 /* ============================================================
@@ -345,9 +372,9 @@ html, body {
    ============================================================ */
 @media (max-width: 768px) {
   .logo { font-size: 1.1rem; }
-  .status-panel { font-size: 0.7rem; min-width: 120px; padding: 8px 12px; }
-  .hologram-text { font-size: 2.2rem; letter-spacing: 3px; }
+  .status-panel { font-size: 0.7rem; min-width: 150px; padding: 8px 12px; }
   .webcam-box { width: 140px; height: 105px; }
   .controls { bottom: 16px; left: 16px; }
   .ctrl-btn { font-size: 0.7rem; padding: 6px 10px; }
+  .gesture-legend { flex-direction: column; gap: 4px; top: 12px; font-size: 0.65rem; padding: 6px 12px; }
 }

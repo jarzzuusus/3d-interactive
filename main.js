@@ -1,10 +1,10 @@
 // ============================================================
 // main.js
 // Application entry point. Wires together:
-// - SceneManager (Three.js scene, object, particles, post-fx)
+// - SceneManager (Three.js particle scene, post-fx, text, effects)
 // - HandTracker (MediaPipe hand landmarks)
-// - GestureDetector (gesture classification + stabilization)
-// UI updates (status indicators, FPS, hologram text, debug view)
+// - GestureDetector (stable gesture classification + confidence)
+// UI updates (status indicators, FPS, gesture/confidence, debug view)
 // ============================================================
 
 import * as THREE from "three";
@@ -23,8 +23,9 @@ const debugCtx = debugCanvas.getContext("2d");
 const statusCamera = document.getElementById("status-camera");
 const statusHand = document.getElementById("status-hand");
 const gestureLabel = document.getElementById("gesture-label");
+const confidenceLabel = document.getElementById("confidence-label");
+const confidenceBar = document.getElementById("confidence-bar");
 const fpsLabel = document.getElementById("fps-label");
-const hologramText = document.getElementById("hologram-text");
 
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingText = document.getElementById("loading-text");
@@ -35,7 +36,6 @@ const startOverlay = document.getElementById("start-overlay");
 const startBtn = document.getElementById("start-btn");
 
 const toggleDebugBtn = document.getElementById("toggle-debug");
-const modelSelect = document.getElementById("model-select");
 const toggleSoundBtn = document.getElementById("toggle-sound");
 
 // ----------------------------------------------------------
@@ -43,12 +43,11 @@ const toggleSoundBtn = document.getElementById("toggle-sound");
 // ----------------------------------------------------------
 let debugMode = false;
 let soundEnabled = true;
-let lastGesture = GESTURES.NONE;
-let helloTimeout = null;
 
 // FPS tracking
 let frameCount = 0;
 let fpsTimer = performance.now();
+let lastDetectTime = performance.now();
 
 // ----------------------------------------------------------
 // Audio feedback (generated tones via WebAudio — no external files)
@@ -70,35 +69,15 @@ function playTone(freq = 660, duration = 0.12) {
   osc.stop(audioCtx.currentTime + duration);
 }
 
-function playGestureSound(gesture) {
-  switch (gesture) {
-    case GESTURES.OPEN_PALM:
-      playTone(880, 0.15);
-      break;
-    case GESTURES.HEART:
-      playTone(660, 0.1);
-      setTimeout(() => playTone(990, 0.15), 90);
-      break;
-    case GESTURES.WAVE:
-      playTone(523, 0.12);
-      break;
-    case GESTURES.FIST:
-      playTone(330, 0.1);
-      break;
-    case GESTURES.PINCH:
-      playTone(220, 0.2);
-      break;
-  }
+function playDestructionSound() {
+  playTone(220, 0.3);
+  setTimeout(() => playTone(110, 0.4), 80);
 }
 
 // ----------------------------------------------------------
-// Initialize Three.js scene
+// Initialize Three.js scene + gesture detector
 // ----------------------------------------------------------
 const sceneManager = new SceneManager(sceneContainer);
-
-// ----------------------------------------------------------
-// Initialize gesture detector
-// ----------------------------------------------------------
 const gestureDetector = new GestureDetector();
 
 // ----------------------------------------------------------
@@ -107,22 +86,19 @@ const gestureDetector = new GestureDetector();
 
 /**
  * Converts a normalized hand landmark (x,y in [0,1], z roughly in [-1,1])
- * into a world-space position for the 3D object.
+ * into a world-space position for the particle object.
  * The video is mirrored, so we flip X to feel natural (move hand right
  * -> object moves right from the user's perspective).
  */
 function landmarkToWorldPosition(landmark) {
   const x = (0.5 - landmark.x) * 8; // mirrored, scaled to scene width
   const y = (0.5 - landmark.y) * 6; // inverted Y (image space -> world up)
-  const z = -landmark.z * 10; // depth
+  const z = -landmark.z * 6; // slight depth movement
   return new THREE.Vector3(x, y, z);
 }
 
 /**
- * Estimates hand rotation (Euler) from landmark geometry:
- * - Roll: angle between wrist and middle finger MCP in screen plane
- * - Yaw/Pitch: derived from the palm normal approximated via
- *   the vectors wrist->index_mcp and wrist->pinky_mcp.
+ * Estimates hand rotation (Euler) from landmark geometry.
  */
 function landmarkToRotation(hand) {
   const wrist = hand[0];
@@ -130,12 +106,10 @@ function landmarkToRotation(hand) {
   const pinkyMcp = hand[17];
   const middleMcp = hand[9];
 
-  // Roll: angle of the hand in the image plane
   const dx = middleMcp.x - wrist.x;
   const dy = middleMcp.y - wrist.y;
   const roll = Math.atan2(dy, dx) + Math.PI / 2;
 
-  // Approximate palm normal via cross product of two in-plane vectors
   const v1 = new THREE.Vector3(indexMcp.x - wrist.x, indexMcp.y - wrist.y, indexMcp.z - wrist.z);
   const v2 = new THREE.Vector3(pinkyMcp.x - wrist.x, pinkyMcp.y - wrist.y, pinkyMcp.z - wrist.z);
   const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
@@ -143,7 +117,7 @@ function landmarkToRotation(hand) {
   const yaw = Math.atan2(normal.x, normal.z);
   const pitch = Math.atan2(normal.y, normal.z);
 
-  return new THREE.Euler(pitch, yaw, -roll);
+  return new THREE.Euler(pitch * 0.4, yaw * 0.4, -roll * 0.4);
 }
 
 // ----------------------------------------------------------
@@ -151,29 +125,41 @@ function landmarkToRotation(hand) {
 // ----------------------------------------------------------
 const tracker = new HandTracker(videoEl, (results) => {
   const hands = results.landmarks;
+  const now = performance.now();
+  const deltaMs = now - lastDetectTime;
+  lastDetectTime = now;
 
   if (hands.length > 0) {
     statusHand.classList.add("active");
 
-    // Use the first detected hand to drive the object
     const primary = hands[0];
-    const wrist = primary[0];
-
-    const targetPos = landmarkToWorldPosition(wrist);
+    const targetPos = landmarkToWorldPosition(primary[0]);
     const targetRot = landmarkToRotation(primary);
     sceneManager.setHandTarget(targetPos, targetRot);
-
-    // Gesture detection
-    const gesture = gestureDetector.detect(hands);
-    updateGestureUI(gesture);
-    applyGestureToScene(gesture);
   } else {
     statusHand.classList.remove("active");
     sceneManager.clearHandTarget();
+  }
 
-    const gesture = gestureDetector.detect([]);
-    updateGestureUI(gesture);
-    applyGestureToScene(gesture);
+  // Gesture detection (stability + confidence + events)
+  const result = gestureDetector.detect(hands, now, deltaMs);
+  updateGestureUI(result);
+
+  if (result.events.destruction) {
+    sceneManager.triggerDestruction();
+    playDestructionSound();
+  }
+  if (result.events.spawnText) {
+    sceneManager.spawnText();
+    playTone(880, 0.12);
+  }
+  if (result.events.removeText) {
+    sceneManager.removeText();
+    playTone(440, 0.12);
+  }
+  if (result.events.changeText) {
+    sceneManager.changeText();
+    playTone(660, 0.1);
   }
 
   // Debug overlay drawing
@@ -183,51 +169,13 @@ const tracker = new HandTracker(videoEl, (results) => {
 });
 
 // ----------------------------------------------------------
-// Apply gesture results to the scene + UI + sound
+// UI updates
 // ----------------------------------------------------------
-function applyGestureToScene(gesture) {
-  if (gesture !== lastGesture) {
-    playGestureSound(gesture);
-
-    switch (gesture) {
-      case GESTURES.OPEN_PALM:
-        sceneManager.setMode("love");
-        break;
-      case GESTURES.HEART:
-        sceneManager.setMode("heart");
-        break;
-      case GESTURES.FIST:
-        sceneManager.setMode("default");
-        break;
-      case GESTURES.PINCH:
-        sceneManager.setMode("destruction");
-        break;
-      case GESTURES.WAVE:
-        showHologram();
-        sceneManager.triggerHelloEffect();
-        break;
-      default:
-        // NONE -> keep current mode unless it was love (revert gently)
-        if (lastGesture === GESTURES.OPEN_PALM || lastGesture === GESTURES.HEART) {
-          sceneManager.setMode("default");
-        }
-        break;
-    }
-
-    lastGesture = gesture;
-  }
-}
-
-function updateGestureUI(gesture) {
-  gestureLabel.textContent = gesture;
-}
-
-function showHologram() {
-  hologramText.classList.add("show");
-  clearTimeout(helloTimeout);
-  helloTimeout = setTimeout(() => {
-    hologramText.classList.remove("show");
-  }, 2200);
+function updateGestureUI(result) {
+  gestureLabel.textContent = result.gesture;
+  const pct = Math.round(result.confidence * 100);
+  confidenceLabel.textContent = `${pct}%`;
+  confidenceBar.style.width = `${pct}%`;
 }
 
 // ----------------------------------------------------------
@@ -250,7 +198,6 @@ function drawDebugLandmarks(handsRaw) {
   const h = debugCanvas.height;
 
   for (const hand of handsRaw) {
-    // Draw connections
     debugCtx.strokeStyle = "#00f0ff";
     debugCtx.lineWidth = 2;
     for (const [a, b] of HAND_CONNECTIONS) {
@@ -261,7 +208,6 @@ function drawDebugLandmarks(handsRaw) {
       debugCtx.lineTo(pb.x * w, pb.y * h);
       debugCtx.stroke();
     }
-    // Draw points
     debugCtx.fillStyle = "#ff2bd6";
     for (const p of hand) {
       debugCtx.beginPath();
@@ -287,10 +233,6 @@ toggleDebugBtn.addEventListener("click", () => {
   }
 });
 
-modelSelect.addEventListener("change", (e) => {
-  sceneManager.setModel(e.target.value);
-});
-
 toggleSoundBtn.addEventListener("click", () => {
   soundEnabled = !soundEnabled;
   toggleSoundBtn.textContent = `Sound: ${soundEnabled ? "ON" : "OFF"}`;
@@ -303,7 +245,7 @@ function renderLoop() {
   requestAnimationFrame(renderLoop);
 
   const now = performance.now();
-  
+
   // Run hand tracking detection
   tracker.detectFrame(now);
 
@@ -349,13 +291,13 @@ async function startApp() {
     loadingOverlay.classList.add("hidden");
     errorOverlay.classList.remove("hidden");
 
-    let msg = "Tidak dapat mengakses kamera. ";
+    let msg = "Could not access the camera. ";
     if (err.name === "NotAllowedError") {
-      msg += "Izin kamera ditolak. Mohon izinkan akses kamera pada browser.";
+      msg += "Camera permission was denied. Please allow camera access in your browser.";
     } else if (err.name === "NotFoundError") {
-      msg += "Tidak ada perangkat kamera yang ditemukan.";
+      msg += "No camera device was found.";
     } else {
-      msg += err.message || "Terjadi kesalahan tidak diketahui.";
+      msg += err.message || "An unknown error occurred.";
     }
     errorMessage.textContent = msg;
 
@@ -366,7 +308,7 @@ async function startApp() {
 }
 
 // Render the 3D scene immediately so the background looks alive
-// even before the user taps "Mulai".
+// even before the user taps "Start".
 let appStarted = false;
 function idleRender() {
   if (appStarted) return; // renderLoop takes over once started

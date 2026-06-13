@@ -1,103 +1,40 @@
 // ============================================================
 // gestureDetector.js
-// Analyzes hand landmarks to classify gestures:
-// - Open Palm
-// - Fist
-// - Heart (two hands forming heart shape)
-// - Wave (open palm moving side to side)
-// - Pinch (special "destruction" gesture)
-//
-// Includes a simple temporal stability filter (AI-like smoothing)
-// so transitions between gestures don't flicker rapidly.
+// Classifies hand landmarks into gestures with:
+//  - Per-frame confidence scores
+//  - Temporal stability (300-500ms hold before a gesture "confirms")
+//  - Event flags for higher-level actions:
+//      - FIST -> OPEN_PALM (fast)  => destruction
+//      - PEACE                     => spawn text
+//      - THUMB_UP                  => remove text
+//      - PINCH                     => change text
+//  - Cooldown to avoid repeated/accidental triggers
 // ============================================================
 
-// MediaPipe hand landmark indices reference:
-// 0: wrist
-// 4: thumb tip, 8: index tip, 12: middle tip, 16: ring tip, 20: pinky tip
-// 5,9,13,17: respective finger MCP (base) joints
-
-const GESTURES = {
+export const GESTURES = {
   NONE: "None",
-  OPEN_PALM: "Open Palm",
   FIST: "Fist",
-  HEART: "Heart",
-  WAVE: "Wave",
+  OPEN_PALM: "Open Palm",
+  PEACE: "Peace",
+  THUMB_UP: "Thumb Up",
   PINCH: "Pinch",
 };
 
 export class GestureDetector {
   constructor() {
-    this.currentGesture = GESTURES.NONE;
-    this.candidateGesture = GESTURES.NONE;
-    this.candidateFrames = 0;
-    this.requiredFrames = 5; // frames a gesture must persist to be confirmed
+    this.confirmed = GESTURES.NONE;
+    this.candidate = GESTURES.NONE;
+    this.candidateSince = 0;
+    this.requiredMs = 400; // stability window (300-500ms)
 
-    // Wave detection state: track wrist X position history
-    this.wristXHistory = [];
-    this.waveWindow = 20; // number of frames to analyze for wave
-    this.lastWaveTime = 0;
+    this.confidence = 0;
+
+    this.destructionCooldownMs = 0;
+    // Track when FIST was last confirmed, to detect a fast FIST->OPEN_PALM
+    this.fistConfirmedAt = 0;
+    this.fastTransitionWindowMs = 700;
   }
 
-  /**
-   * Main entry point. Takes the smoothed landmark sets for up to two hands.
-   * @param {Array} hands - array of landmark arrays (each 21 points)
-   * @returns {string} gesture name
-   */
-  detect(hands) {
-    let raw = GESTURES.NONE;
-
-    if (!hands || hands.length === 0) {
-      this.wristXHistory = [];
-      return this._stabilize(GESTURES.NONE);
-    }
-
-    // --- Two-hand HEART gesture check first (highest priority) ---
-    if (hands.length === 2 && this._isHeartShape(hands[0], hands[1])) {
-      raw = GESTURES.HEART;
-    } else {
-      // Evaluate primary hand (first detected)
-      const hand = hands[0];
-
-      if (this._isPinch(hand)) {
-        raw = GESTURES.PINCH;
-      } else if (this._isFist(hand)) {
-        raw = GESTURES.FIST;
-      } else if (this._isOpenPalm(hand)) {
-        // Check if it's waving
-        if (this._isWaving(hand)) {
-          raw = GESTURES.WAVE;
-        } else {
-          raw = GESTURES.OPEN_PALM;
-        }
-      }
-    }
-
-    return this._stabilize(raw);
-  }
-
-  /**
-   * Stability filter: a new gesture must persist for `requiredFrames`
-   * consecutive detections before it becomes the active gesture.
-   * This prevents flickering between gestures.
-   */
-  _stabilize(raw) {
-    if (raw === this.candidateGesture) {
-      this.candidateFrames++;
-    } else {
-      this.candidateGesture = raw;
-      this.candidateFrames = 1;
-    }
-
-    if (this.candidateFrames >= this.requiredFrames) {
-      this.currentGesture = this.candidateGesture;
-    }
-
-    return this.currentGesture;
-  }
-
-  // ----------------------------------------------------------
-  // Distance helper
-  // ----------------------------------------------------------
   _dist(a, b) {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
@@ -105,97 +42,123 @@ export class GestureDetector {
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
-  // ----------------------------------------------------------
-  // FIST: all fingertips close to the palm (wrist)
-  // ----------------------------------------------------------
-  _isFist(hand) {
-    const wrist = hand[0];
-    const tips = [8, 12, 16, 20].map((i) => hand[i]);
-    const mcp = [5, 9, 13, 17].map((i) => hand[i]);
+  _fingerExtended(hand, tipIdx, mcpIdx, wristIdx) {
+    const tipToWrist = this._dist(hand[tipIdx], hand[wristIdx]);
+    const mcpToWrist = this._dist(hand[mcpIdx], hand[wristIdx]);
+    const ratio = tipToWrist / (mcpToWrist || 0.0001);
+    return { extended: ratio > 1.25, ratio };
+  }
 
-    let curledCount = 0;
-    for (let i = 0; i < tips.length; i++) {
-      // If tip is closer to wrist than the MCP joint is, finger is curled
-      const tipToWrist = this._dist(tips[i], wrist);
-      const mcpToWrist = this._dist(mcp[i], wrist);
-      if (tipToWrist < mcpToWrist * 1.1) curledCount++;
+  /**
+   * Classify a single hand's landmarks into a gesture + confidence (0-1).
+   */
+  _classify(hand) {
+    const wrist = 0;
+
+    const index = this._fingerExtended(hand, 8, 5, wrist);
+    const middle = this._fingerExtended(hand, 12, 9, wrist);
+    const ring = this._fingerExtended(hand, 16, 13, wrist);
+    const pinky = this._fingerExtended(hand, 20, 17, wrist);
+    const fingers = [index, middle, ring, pinky];
+    const extendedCount = fingers.filter((f) => f.extended).length;
+    const avgRatio = fingers.reduce((s, f) => s + f.ratio, 0) / fingers.length;
+
+    // PINCH: thumb tip close to index tip
+    const pinchDist = this._dist(hand[4], hand[8]);
+    if (pinchDist < 0.045) {
+      const confidence = Math.min(1, (0.045 - pinchDist) / 0.045 + 0.35);
+      return { gesture: GESTURES.PINCH, confidence };
     }
-    return curledCount >= 3;
-  }
 
-  // ----------------------------------------------------------
-  // OPEN PALM: all fingers extended (tips far from palm/MCP)
-  // ----------------------------------------------------------
-  _isOpenPalm(hand) {
-    const wrist = hand[0];
-    const tips = [8, 12, 16, 20].map((i) => hand[i]);
-    const mcp = [5, 9, 13, 17].map((i) => hand[i]);
+    // THUMB UP: thumb extended, pointing up, other fingers curled
+    const thumbToWrist = this._dist(hand[4], hand[wrist]);
+    const thumbMcpToWrist = this._dist(hand[2], hand[wrist]);
+    const thumbRatio = thumbToWrist / (thumbMcpToWrist || 0.0001);
+    const thumbExtended = thumbRatio > 1.4;
+    const thumbPointingUp = hand[4].y < hand[wrist].y - 0.05;
 
-    let extendedCount = 0;
-    for (let i = 0; i < tips.length; i++) {
-      const tipToWrist = this._dist(tips[i], wrist);
-      const mcpToWrist = this._dist(mcp[i], wrist);
-      if (tipToWrist > mcpToWrist * 1.3) extendedCount++;
+    if (thumbExtended && thumbPointingUp && extendedCount <= 1) {
+      const confidence = Math.min(1, 0.4 + (thumbRatio - 1.4) / 0.6);
+      return { gesture: GESTURES.THUMB_UP, confidence };
     }
-    return extendedCount >= 3;
-  }
 
-  // ----------------------------------------------------------
-  // PINCH: thumb tip close to index tip (used for "destruction" mode)
-  // ----------------------------------------------------------
-  _isPinch(hand) {
-    const thumbTip = hand[4];
-    const indexTip = hand[8];
-    const d = this._dist(thumbTip, indexTip);
-    return d < 0.045; // normalized coordinate threshold
-  }
-
-  // ----------------------------------------------------------
-  // HEART: two open hands with index fingers + thumbs touching,
-  // forming a heart shape (approximate check)
-  // ----------------------------------------------------------
-  _isHeartShape(handA, handB) {
-    const aThumb = handA[4];
-    const aIndex = handA[8];
-    const bThumb = handB[4];
-    const bIndex = handB[8];
-
-    // Thumbs should be close together, index tips should be close together
-    const thumbsClose = this._dist(aThumb, bThumb) < 0.08;
-    const indexClose = this._dist(aIndex, bIndex) < 0.12;
-
-    // Both hands should be roughly open
-    const aOpen = this._isOpenPalm(handA);
-    const bOpen = this._isOpenPalm(handB);
-
-    return thumbsClose && indexClose && aOpen && bOpen;
-  }
-
-  // ----------------------------------------------------------
-  // WAVE: open palm with wrist oscillating horizontally
-  // ----------------------------------------------------------
-  _isWaving(hand) {
-    const wristX = hand[0].x;
-    this.wristXHistory.push(wristX);
-    if (this.wristXHistory.length > this.waveWindow) {
-      this.wristXHistory.shift();
+    // FIST: nothing extended
+    if (extendedCount === 0) {
+      const curl = Math.max(0.3, 1 - avgRatio / 1.25);
+      return { gesture: GESTURES.FIST, confidence: Math.min(1, curl) };
     }
-    if (this.wristXHistory.length < this.waveWindow) return false;
 
-    // Count direction changes (oscillations)
-    let directionChanges = 0;
-    let lastDir = 0;
-    for (let i = 1; i < this.wristXHistory.length; i++) {
-      const diff = this.wristXHistory[i] - this.wristXHistory[i - 1];
-      const dir = diff > 0.002 ? 1 : diff < -0.002 ? -1 : 0;
-      if (dir !== 0 && dir !== lastDir && lastDir !== 0) {
-        directionChanges++;
+    // PEACE: index + middle extended, ring + pinky curled
+    if (index.extended && middle.extended && !ring.extended && !pinky.extended) {
+      const confidence = Math.min(1, (index.ratio + middle.ratio) / 2 / 1.6);
+      return { gesture: GESTURES.PEACE, confidence };
+    }
+
+    // OPEN PALM: most fingers extended
+    if (extendedCount >= 3) {
+      const confidence = Math.min(1, avgRatio / 1.6);
+      return { gesture: GESTURES.OPEN_PALM, confidence };
+    }
+
+    return { gesture: GESTURES.NONE, confidence: 0 };
+  }
+
+  /**
+   * @param {Array} hands - smoothed landmark arrays (0-2 hands)
+   * @param {number} now - performance.now() timestamp
+   * @param {number} deltaMs - ms since previous detect() call
+   * @returns {{gesture, candidate, confidence, events}}
+   */
+  detect(hands, now = performance.now(), deltaMs = 16) {
+    const events = { destruction: false, spawnText: false, removeText: false, changeText: false };
+
+    this.destructionCooldownMs = Math.max(0, this.destructionCooldownMs - deltaMs);
+
+    let raw = GESTURES.NONE;
+    let conf = 0;
+
+    if (hands && hands.length > 0) {
+      const r = this._classify(hands[0]);
+      raw = r.gesture;
+      conf = r.confidence;
+    }
+
+    if (raw !== this.candidate) {
+      this.candidate = raw;
+      this.candidateSince = now;
+    }
+    this.confidence = conf;
+
+    // Confirm the candidate once it's been stable long enough
+    if (now - this.candidateSince >= this.requiredMs && this.confirmed !== this.candidate) {
+      const prev = this.confirmed;
+      this.confirmed = this.candidate;
+
+      if (this.confirmed === GESTURES.FIST) {
+        this.fistConfirmedAt = now;
       }
-      if (dir !== 0) lastDir = dir;
+
+      // Fast FIST -> OPEN_PALM transition triggers destruction
+      if (
+        prev === GESTURES.FIST &&
+        this.confirmed === GESTURES.OPEN_PALM &&
+        now - this.fistConfirmedAt <= this.fastTransitionWindowMs &&
+        this.destructionCooldownMs <= 0
+      ) {
+        events.destruction = true;
+        this.destructionCooldownMs = 1500;
+      }
+
+      if (this.confirmed === GESTURES.PEACE) events.spawnText = true;
+      if (this.confirmed === GESTURES.THUMB_UP) events.removeText = true;
+      if (this.confirmed === GESTURES.PINCH) events.changeText = true;
     }
 
-    return directionChanges >= 2;
+    return {
+      gesture: this.confirmed,
+      candidate: this.candidate,
+      confidence: this.confidence,
+      events,
+    };
   }
 }
-
-export { GESTURES };
