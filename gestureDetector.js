@@ -1,30 +1,23 @@
 // ============================================================
-// gestureDetector.js  (extended)
+// gestureDetector.js  (v4 — shape-specific gestures + edit mode)
 //
-// Gestures:
-//   NONE, FIST, OPEN_PALM, PEACE, THUMB_UP, PINCH,
-//   POINT (only index extended),
-//   CALL (thumb + pinky extended),
-//   ROCK (index + pinky extended — "rock" sign)
+// DEFAULT GESTURE MAP:
+//   FIST          → destruction (anytime)
+//   PEACE         → spawnText
+//   THUMB_UP      → removeText
+//   PINCH         → changeText
+//   POINT         → shape: saturn
+//   CALL          → shape: love
+//   ROCK          → shape: dragon
+//   OPEN_PALM     → shape: sphere
 //
-// Events fired (single-shot, debounced):
-//   destruction   — OPEN_PALM → FIST  (palm mengepal → smooth dissolve)
-//   spawnText     — PEACE confirmed
-//   removeText    — THUMB_UP confirmed
-//   changeText    — PINCH confirmed
-//   nextShape     — POINT confirmed        (cycle shapes: saturn→love→dragon→sphere)
-//   prevShape     — CALL confirmed         (cycle shapes backwards)
-//   twoHandEvent  — both hands detected simultaneously (reserved for 2-hand gestures)
-//
-// 2-hand support:
-//   Both hands are classified; secondary hand gesture is returned in result.secondGesture.
-//   A combined "two-hand destruction" fires when BOTH hands do FIST→PALM.
+// Edit mode: user can remap gesture → action via UI
 // ============================================================
 
 export const GESTURES = {
   NONE:       "None",
-  FIST:       "Fist",
-  OPEN_PALM:  "Open Palm",
+  FIST:       "Fist ✊",
+  OPEN_PALM:  "Open Palm ✋",
   PEACE:      "Peace ✌",
   THUMB_UP:   "Thumb Up 👍",
   PINCH:      "Pinch 🤏",
@@ -33,14 +26,74 @@ export const GESTURES = {
   ROCK:       "Rock 🤘",
 };
 
+export const ACTIONS = {
+  NONE:        "none",
+  DESTRUCTION: "destruction",
+  SPAWN_TEXT:  "spawnText",
+  REMOVE_TEXT: "removeText",
+  CHANGE_TEXT: "changeText",
+  SHAPE_SATURN: "shape_saturn",
+  SHAPE_LOVE:   "shape_love",
+  SHAPE_DRAGON: "shape_dragon",
+  SHAPE_SPHERE: "shape_sphere",
+};
+
+// Default gesture → action mapping
+const DEFAULT_MAP = {
+  [GESTURES.FIST]:      ACTIONS.DESTRUCTION,
+  [GESTURES.OPEN_PALM]: ACTIONS.SHAPE_SPHERE,
+  [GESTURES.PEACE]:     ACTIONS.SPAWN_TEXT,
+  [GESTURES.THUMB_UP]:  ACTIONS.REMOVE_TEXT,
+  [GESTURES.PINCH]:     ACTIONS.CHANGE_TEXT,
+  [GESTURES.POINT]:     ACTIONS.SHAPE_SATURN,
+  [GESTURES.CALL]:      ACTIONS.SHAPE_LOVE,
+  [GESTURES.ROCK]:      ACTIONS.SHAPE_DRAGON,
+};
+
+// Action cooldowns in ms
+const ACTION_COOLDOWNS = {
+  [ACTIONS.DESTRUCTION]: 2000,
+  [ACTIONS.SPAWN_TEXT]:  600,
+  [ACTIONS.REMOVE_TEXT]: 600,
+  [ACTIONS.CHANGE_TEXT]: 600,
+  [ACTIONS.SHAPE_SATURN]: 1000,
+  [ACTIONS.SHAPE_LOVE]:   1000,
+  [ACTIONS.SHAPE_DRAGON]: 1000,
+  [ACTIONS.SHAPE_SPHERE]: 1000,
+};
+
 export class GestureDetector {
   constructor() {
-    // Per-hand state (index 0 = primary, index 1 = secondary)
     this.hands = [this._makeHandState(), this._makeHandState()];
-    this.requiredMs = 350;
+    this.requiredMs = 320;
 
-    this.destructionCooldownMs = 0;
-    this.shapeCooldownMs       = 0;
+    // Gesture → Action map (mutable for edit mode)
+    this.gestureMap = { ...DEFAULT_MAP };
+
+    // Per-action cooldown timers
+    this.cooldowns = {};
+    Object.values(ACTIONS).forEach(a => this.cooldowns[a] = 0);
+
+    // Edit mode
+    this.editMode = false;
+    this.editListenCallback = null; // called with gesture name when gesture confirmed in edit mode
+  }
+
+  setGestureMap(map) {
+    this.gestureMap = { ...map };
+  }
+
+  getGestureMap() {
+    return { ...this.gestureMap };
+  }
+
+  resetGestureMap() {
+    this.gestureMap = { ...DEFAULT_MAP };
+  }
+
+  // Enter edit mode: next confirmed gesture will be passed to callback
+  listenForGesture(callback) {
+    this.editListenCallback = callback;
   }
 
   _makeHandState() {
@@ -49,14 +102,12 @@ export class GestureDetector {
       candidate:      GESTURES.NONE,
       candidateSince: 0,
       confidence:     0,
-      fistConfirmedAt: 0,
-      palmConfirmedAt: 0,
     };
   }
 
   _dist(a, b) {
-    const dx = a.x - b.x, dy = a.y - b.y, dz = (a.z || 0) - (b.z || 0);
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const dx = a.x - b.x, dy = a.y - b.y, dz = (a.z||0)-(b.z||0);
+    return Math.sqrt(dx*dx + dy*dy + dz*dz);
   }
 
   _fingerExtended(hand, tipIdx, mcpIdx, wristIdx) {
@@ -76,10 +127,10 @@ export class GestureDetector {
     const extendedCount = fingers.filter(f => f.extended).length;
     const avgRatio = fingers.reduce((s, f) => s + f.ratio, 0) / fingers.length;
 
-    // PINCH
+    // PINCH — check first (high priority)
     const pinchDist = this._dist(hand[4], hand[8]);
-    if (pinchDist < 0.045) {
-      return { gesture: GESTURES.PINCH, confidence: Math.min(1, (0.045 - pinchDist) / 0.045 + 0.35) };
+    if (pinchDist < 0.048) {
+      return { gesture: GESTURES.PINCH, confidence: Math.min(1, (0.048 - pinchDist) / 0.048 + 0.35) };
     }
 
     // THUMB
@@ -95,33 +146,32 @@ export class GestureDetector {
     }
 
     // CALL: thumb + pinky extended, others curled
-    const pinkyExtended = pinky.extended;
-    if (thumbExtended && pinkyExtended && !index.extended && !middle.extended && !ring.extended) {
-      return { gesture: GESTURES.CALL, confidence: 0.8 };
+    if (thumbExtended && pinky.extended && !index.extended && !middle.extended && !ring.extended) {
+      return { gesture: GESTURES.CALL, confidence: 0.82 };
     }
 
-    // FIST
+    // FIST — must come before OPEN_PALM
     if (extendedCount === 0) {
       const curl = Math.max(0.3, 1 - avgRatio / 1.25);
       return { gesture: GESTURES.FIST, confidence: Math.min(1, curl) };
     }
 
-    // PEACE: index + middle, others curled
+    // PEACE: index + middle only
     if (index.extended && middle.extended && !ring.extended && !pinky.extended) {
       return { gesture: GESTURES.PEACE, confidence: Math.min(1, (index.ratio + middle.ratio) / 2 / 1.6) };
     }
 
-    // POINT: only index extended
+    // POINT: only index
     if (index.extended && !middle.extended && !ring.extended && !pinky.extended) {
       return { gesture: GESTURES.POINT, confidence: Math.min(1, index.ratio / 1.6) };
     }
 
-    // ROCK: index + pinky, middle + ring curled
+    // ROCK: index + pinky
     if (index.extended && !middle.extended && !ring.extended && pinky.extended) {
-      return { gesture: GESTURES.ROCK, confidence: 0.8 };
+      return { gesture: GESTURES.ROCK, confidence: 0.82 };
     }
 
-    // OPEN PALM
+    // OPEN PALM (3+ fingers)
     if (extendedCount >= 3) {
       return { gesture: GESTURES.OPEN_PALM, confidence: Math.min(1, avgRatio / 1.6) };
     }
@@ -141,46 +191,33 @@ export class GestureDetector {
       const prev       = state.confirmed;
       state.confirmed  = state.candidate;
       justConfirmed    = { prev, next: state.confirmed };
-
-      if (state.confirmed === GESTURES.FIST) {
-        state.fistConfirmedAt = now;
-      }
-      if (state.confirmed === GESTURES.OPEN_PALM) {
-        state.palmConfirmedAt = now;
-      }
     }
     return justConfirmed;
   }
 
-  /**
-   * @param {Array}  hands   - 0, 1, or 2 smoothed landmark arrays
-   * @param {number} now     - performance.now()
-   * @param {number} deltaMs
-   */
   detect(hands, now = performance.now(), deltaMs = 16) {
     const events = {
       destruction:   false,
       spawnText:     false,
       removeText:    false,
       changeText:    false,
-      nextShape:     false,
-      prevShape:     false,
+      shape:         null,   // string: "saturn" | "love" | "dragon" | "sphere" | null
     };
 
-    this.destructionCooldownMs = Math.max(0, this.destructionCooldownMs - deltaMs);
-    this.shapeCooldownMs       = Math.max(0, this.shapeCooldownMs - deltaMs);
+    // Tick down cooldowns
+    Object.keys(this.cooldowns).forEach(a => {
+      this.cooldowns[a] = Math.max(0, this.cooldowns[a] - deltaMs);
+    });
 
-    // Classify up to 2 hands
     const rawGestures = [GESTURES.NONE, GESTURES.NONE];
     const rawConfs    = [0, 0];
 
     for (let i = 0; i < Math.min(2, hands.length); i++) {
-      const r         = this._classify(hands[i]);
-      rawGestures[i]  = r.gesture;
-      rawConfs[i]     = r.confidence;
+      const r = this._classify(hands[i]);
+      rawGestures[i] = r.gesture;
+      rawConfs[i]    = r.confidence;
     }
 
-    // If fewer than 2 hands, reset missing hand state
     for (let i = hands.length; i < 2; i++) {
       this.hands[i] = this._makeHandState();
     }
@@ -188,43 +225,45 @@ export class GestureDetector {
     const confirmed0 = this._updateHandState(this.hands[0], rawGestures[0], rawConfs[0], now);
     const confirmed1 = this._updateHandState(this.hands[1], rawGestures[1], rawConfs[1], now);
 
-    // ── Event firing (primary hand) ────────────────────────
-    if (confirmed0) {
-      const { prev, next } = confirmed0;
-
-      // OPEN_PALM → FIST  = smooth dissolve destruction
-      if (
-        prev === GESTURES.OPEN_PALM &&
-        next === GESTURES.FIST &&
-        this.destructionCooldownMs <= 0
-      ) {
-        events.destruction = true;
-        this.destructionCooldownMs = 2000;
-      }
-
-      if (next === GESTURES.PEACE)     events.spawnText  = true;
-      if (next === GESTURES.THUMB_UP)  events.removeText = true;
-      if (next === GESTURES.PINCH)     events.changeText = true;
-
-      if (next === GESTURES.POINT && this.shapeCooldownMs <= 0) {
-        events.nextShape = true;
-        this.shapeCooldownMs = 1200;
-      }
-      if (next === GESTURES.CALL && this.shapeCooldownMs <= 0) {
-        events.prevShape = true;
-        this.shapeCooldownMs = 1200;
+    // Edit mode: capture next confirmed gesture
+    if (this.editListenCallback && confirmed0) {
+      const g = confirmed0.next;
+      if (g !== GESTURES.NONE) {
+        this.editListenCallback(g);
+        this.editListenCallback = null;
       }
     }
 
-    // ── Two-hand destruction: both hands FIST simultaneously ──
+    // Fire events from primary hand
+    if (confirmed0) {
+      const gesture = confirmed0.next;
+      const action  = this.gestureMap[gesture] || ACTIONS.NONE;
+
+      if (action !== ACTIONS.NONE && this.cooldowns[action] <= 0) {
+        this.cooldowns[action] = ACTION_COOLDOWNS[action] || 1000;
+
+        switch (action) {
+          case ACTIONS.DESTRUCTION:  events.destruction = true; break;
+          case ACTIONS.SPAWN_TEXT:   events.spawnText   = true; break;
+          case ACTIONS.REMOVE_TEXT:  events.removeText  = true; break;
+          case ACTIONS.CHANGE_TEXT:  events.changeText  = true; break;
+          case ACTIONS.SHAPE_SATURN: events.shape = "saturn";   break;
+          case ACTIONS.SHAPE_LOVE:   events.shape = "love";     break;
+          case ACTIONS.SHAPE_DRAGON: events.shape = "dragon";   break;
+          case ACTIONS.SHAPE_SPHERE: events.shape = "sphere";   break;
+        }
+      }
+    }
+
+    // Two-hand fist = destruction regardless of map
     if (
       this.hands[0].confirmed === GESTURES.FIST &&
       this.hands[1].confirmed === GESTURES.FIST &&
       hands.length >= 2 &&
-      this.destructionCooldownMs <= 0
+      this.cooldowns[ACTIONS.DESTRUCTION] <= 0
     ) {
       events.destruction = true;
-      this.destructionCooldownMs = 2000;
+      this.cooldowns[ACTIONS.DESTRUCTION] = 2000;
     }
 
     return {

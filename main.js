@@ -1,11 +1,12 @@
 // ============================================================
-// main.js  (v3 — 2-hand support, shape switching, updated gestures)
+// main.js  (v4 — gesture edit mode, shape-direct switching)
 // ============================================================
 
 import * as THREE from "three";
-import { SceneManager }             from "./threeScene.js";
-import { HandTracker }              from "./handTracking.js";
-import { GestureDetector, GESTURES } from "./gestureDetector.js";
+import { SceneManager }                        from "./threeScene.js";
+import { HandTracker }                         from "./handTracking.js";
+import { GestureDetector, GESTURES, ACTIONS }  from "./gestureDetector.js";
+import { SHAPES, SHAPE_NAMES_DISPLAY }         from "./particleSystem.js";
 
 // ── DOM ───────────────────────────────────────────────────────
 const sceneContainer  = document.getElementById("scene-container");
@@ -29,6 +30,7 @@ const startOverlay    = document.getElementById("start-overlay");
 const startBtn        = document.getElementById("start-btn");
 const toggleDebugBtn  = document.getElementById("toggle-debug");
 const toggleSoundBtn  = document.getElementById("toggle-sound");
+const editModeBtn     = document.getElementById("toggle-edit-mode");
 
 // ── State ─────────────────────────────────────────────────────
 let debugMode    = false;
@@ -56,13 +58,13 @@ function playTone(freq = 660, dur = 0.12, type = "sine") {
 }
 
 function playDissolveSound() {
-  // Soft whoosh — lower, gentle
-  playTone(180, 0.5, "sine");
-  setTimeout(() => playTone(120, 0.6, "sine"), 120);
+  playTone(280, 0.3, "sine");
+  setTimeout(() => playTone(180, 0.5, "sine"), 80);
+  setTimeout(() => playTone(120, 0.6, "sine"), 200);
 }
 
 // ── Scene + Gesture ───────────────────────────────────────────
-const sceneManager   = new SceneManager(sceneContainer);
+const sceneManager    = new SceneManager(sceneContainer);
 const gestureDetector = new GestureDetector();
 
 // ── Landmark helpers ──────────────────────────────────────────
@@ -79,15 +81,12 @@ function landmarkToRotation(hand) {
   const middleMcp = hand[9];
   const indexMcp  = hand[5];
   const pinkyMcp  = hand[17];
-
   const dx   = middleMcp.x - wrist.x;
   const dy   = middleMcp.y - wrist.y;
   const roll = Math.atan2(dy, dx) + Math.PI / 2;
-
   const v1 = new THREE.Vector3(indexMcp.x - wrist.x, indexMcp.y - wrist.y, indexMcp.z - wrist.z);
   const v2 = new THREE.Vector3(pinkyMcp.x - wrist.x, pinkyMcp.y - wrist.y, pinkyMcp.z - wrist.z);
   const n  = new THREE.Vector3().crossVectors(v1, v2).normalize();
-
   return new THREE.Euler(
     Math.atan2(n.y, n.z) * 0.4,
     Math.atan2(n.x, n.z) * 0.4,
@@ -102,21 +101,17 @@ const tracker = new HandTracker(videoEl, (results) => {
   const delta  = now - lastDetect;
   lastDetect   = now;
 
-  // Update status dot
   statusHand.classList.toggle("active", hands.length > 0);
 
-  // Pass up to 2 hands to scene
   for (let i = 0; i < Math.min(2, hands.length); i++) {
     const pos = landmarkToWorld(hands[i][0]);
     const rot = landmarkToRotation(hands[i]);
     sceneManager.setHandTarget(pos, rot, i);
   }
-  // Clear hands that disappeared
   for (let i = hands.length; i < 2; i++) {
     sceneManager.clearHandTarget(i);
   }
 
-  // Gesture
   const result = gestureDetector.detect(hands, now, delta);
   updateGestureUI(result);
 
@@ -138,21 +133,17 @@ const tracker = new HandTracker(videoEl, (results) => {
     sceneManager.changeText();
     playTone(620, 0.1);
   }
-  if (ev.nextShape) {
-    const name = sceneManager.nextShape();
-    playTone(660, 0.1);
-    showShapeToast(name);
-  }
-  if (ev.prevShape) {
-    const name = sceneManager.prevShape();
-    playTone(520, 0.1);
+  if (ev.shape) {
+    const name = sceneManager.setShape(ev.shape);
+    const shapeFreqs = { saturn: 660, love: 820, dragon: 440, sphere: 550 };
+    playTone(shapeFreqs[ev.shape] || 660, 0.15);
     showShapeToast(name);
   }
 
   if (debugMode) drawDebugLandmarks(results.rawLandmarks);
 });
 
-// ── Shape toast notification ──────────────────────────────────
+// ── Shape toast ───────────────────────────────────────────────
 let _toastTimeout = null;
 function showShapeToast(name) {
   let toast = document.getElementById("shape-toast");
@@ -177,7 +168,7 @@ function showShapeToast(name) {
   _toastTimeout = setTimeout(() => { toast.style.opacity = "0"; }, 1400);
 }
 
-// ── UI update ─────────────────────────────────────────────────
+// ── Gesture UI ────────────────────────────────────────────────
 function updateGestureUI(result) {
   const g2 = result.secondGesture && result.secondGesture !== "None"
     ? ` / ${result.secondGesture}` : "";
@@ -187,7 +178,7 @@ function updateGestureUI(result) {
   confidenceBar.style.width   = `${pct}%`;
 }
 
-// ── Debug overlay ─────────────────────────────────────────────
+// ── Debug ─────────────────────────────────────────────────────
 const CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],
   [0,5],[5,6],[6,7],[7,8],
@@ -224,6 +215,166 @@ function resizeDebugCanvas() {
   debugCanvas.width  = videoEl.clientWidth;
   debugCanvas.height = videoEl.clientHeight;
 }
+
+// ── Gesture Edit Mode ─────────────────────────────────────────
+const GESTURE_EDIT_ACTIONS = [
+  { key: ACTIONS.DESTRUCTION,  label: "💥 Dissolve" },
+  { key: ACTIONS.SPAWN_TEXT,   label: "✏️ Spawn Text" },
+  { key: ACTIONS.REMOVE_TEXT,  label: "🗑 Remove Text" },
+  { key: ACTIONS.CHANGE_TEXT,  label: "🔄 Restart Text" },
+  { key: ACTIONS.SHAPE_SATURN, label: "🪐 Shape: Saturn" },
+  { key: ACTIONS.SHAPE_LOVE,   label: "❤️ Shape: Love" },
+  { key: ACTIONS.SHAPE_DRAGON, label: "🐉 Shape: Dragon" },
+  { key: ACTIONS.SHAPE_SPHERE, label: "⚪ Shape: Sphere" },
+];
+
+const ALL_GESTURES = Object.values(GESTURES).filter(g => g !== GESTURES.NONE);
+
+let editPanelEl = null;
+let editModeActive = false;
+let pendingActionKey = null;
+
+function buildEditPanel() {
+  if (editPanelEl) { editPanelEl.remove(); editPanelEl = null; }
+
+  const panel = document.createElement("div");
+  panel.id = "gesture-edit-panel";
+  Object.assign(panel.style, {
+    position: "fixed", top: "50%", left: "50%",
+    transform: "translate(-50%, -50%)",
+    background: "rgba(5,8,22,0.92)",
+    border: "1px solid rgba(0,240,255,0.3)",
+    borderRadius: "16px",
+    padding: "24px 28px",
+    zIndex: "200",
+    minWidth: "360px",
+    color: "#e6f7ff",
+    fontFamily: "'Segoe UI', Arial, sans-serif",
+    fontSize: "0.85rem",
+    boxShadow: "0 0 40px rgba(0,240,255,0.15)",
+    backdropFilter: "blur(12px)",
+    pointerEvents: "all",
+  });
+
+  const currentMap = gestureDetector.getGestureMap();
+
+  // Invert map: action → gesture
+  const actionToGesture = {};
+  Object.entries(currentMap).forEach(([g, a]) => { actionToGesture[a] = g; });
+
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <span style="font-size:1rem;font-weight:700;letter-spacing:2px;color:#00f0ff;">✏️ EDIT GESTURES</span>
+      <button id="edit-close-btn" style="background:none;border:1px solid rgba(255,80,80,0.5);color:#ff5050;
+        padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.8rem;">Close</button>
+    </div>
+    <div style="font-size:0.72rem;opacity:0.6;margin-bottom:14px;">
+      Click an action, then perform the gesture to assign it.
+    </div>
+    <table id="gesture-map-table" style="width:100%;border-collapse:collapse;"></table>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button id="edit-reset-btn" style="flex:1;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.4);
+        color:#ff8888;padding:8px;border-radius:8px;cursor:pointer;font-size:0.8rem;">Reset Defaults</button>
+    </div>
+    <div id="edit-listen-status" style="margin-top:12px;text-align:center;font-size:0.8rem;min-height:20px;color:#ffcc00;"></div>
+  `;
+
+  document.body.appendChild(panel);
+  editPanelEl = panel;
+
+  renderEditTable(actionToGesture);
+
+  panel.querySelector("#edit-close-btn").addEventListener("click", () => {
+    panel.remove();
+    editPanelEl = null;
+    editModeActive = false;
+    pendingActionKey = null;
+    editModeBtn.textContent = "Edit Gestures";
+    gestureDetector.editListenCallback = null;
+  });
+
+  panel.querySelector("#edit-reset-btn").addEventListener("click", () => {
+    gestureDetector.resetGestureMap();
+    const newMap = gestureDetector.getGestureMap();
+    const newInvert = {};
+    Object.entries(newMap).forEach(([g,a]) => { newInvert[a] = g; });
+    renderEditTable(newInvert);
+    showListenStatus("✅ Reset to defaults");
+  });
+}
+
+function renderEditTable(actionToGesture) {
+  const table = document.getElementById("gesture-map-table");
+  if (!table) return;
+  table.innerHTML = "";
+
+  GESTURE_EDIT_ACTIONS.forEach(({ key, label }) => {
+    const assignedGesture = actionToGesture[key] || "—";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td style="padding:7px 4px;opacity:0.9;">${label}</td>
+      <td style="padding:7px 4px;color:#00f0ff;font-weight:600;text-align:center;"
+        id="cell-${key}">${assignedGesture}</td>
+      <td style="padding:7px 4px;text-align:right;">
+        <button data-action="${key}" class="assign-btn"
+          style="background:rgba(0,240,255,0.1);border:1px solid rgba(0,240,255,0.35);
+          color:#00f0ff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:0.75rem;">
+          Assign
+        </button>
+      </td>
+    `;
+    table.appendChild(tr);
+  });
+
+  table.querySelectorAll(".assign-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      pendingActionKey = btn.dataset.action;
+      showListenStatus("🎯 Show the gesture now...");
+      gestureDetector.listenForGesture((detectedGesture) => {
+        if (!pendingActionKey) return;
+
+        // Remove old mapping for this gesture (avoid conflicts)
+        const map = gestureDetector.getGestureMap();
+        const newMap = { ...map };
+        // Remove any action that was previously on this gesture
+        // Also remove any gesture that had this action
+        Object.keys(newMap).forEach(g => {
+          if (newMap[g] === pendingActionKey) delete newMap[g];
+        });
+        newMap[detectedGesture] = pendingActionKey;
+        gestureDetector.setGestureMap(newMap);
+
+        // Update table cell
+        const cell = document.getElementById(`cell-${pendingActionKey}`);
+        if (cell) cell.textContent = detectedGesture;
+
+        showListenStatus(`✅ "${detectedGesture}" → ${GESTURE_EDIT_ACTIONS.find(a=>a.key===pendingActionKey)?.label}`);
+        pendingActionKey = null;
+      });
+    });
+  });
+}
+
+function showListenStatus(msg) {
+  const el = document.getElementById("edit-listen-status");
+  if (el) {
+    el.textContent = msg;
+    setTimeout(() => { if (el) el.textContent = ""; }, 3000);
+  }
+}
+
+editModeBtn.addEventListener("click", () => {
+  editModeActive = !editModeActive;
+  if (editModeActive) {
+    editModeBtn.textContent = "Close Edit Mode";
+    buildEditPanel();
+  } else {
+    editModeBtn.textContent = "Edit Gestures";
+    if (editPanelEl) { editPanelEl.remove(); editPanelEl = null; }
+    pendingActionKey = null;
+    gestureDetector.editListenCallback = null;
+  }
+});
 
 // ── Controls ──────────────────────────────────────────────────
 toggleDebugBtn.addEventListener("click", () => {

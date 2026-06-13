@@ -1,5 +1,5 @@
 // ============================================================
-// threeScene.js  (v3 — shape switching, 2-hand, subtle bloom)
+// threeScene.js  (v4 — shape by name, gesture edit support)
 // ============================================================
 
 import * as THREE from "three";
@@ -39,7 +39,6 @@ export class SceneManager {
   _initScene() {
     this.scene = new THREE.Scene();
 
-    // Dark gradient bg
     const bgGeo = new THREE.SphereGeometry(50, 32, 32);
     const bgMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
@@ -90,12 +89,9 @@ export class SceneManager {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
-    // Subtle bloom: only very bright spots glow, not everything
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.28,   // strength
-      0.45,   // radius
-      0.72    // threshold (high = very selective)
+      0.28, 0.45, 0.72
     );
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
@@ -112,31 +108,30 @@ export class SceneManager {
     this.bloomPass.setSize(w, h);
   }
 
-  // ── Hand tracking API ─────────────────────────────────────
-  // handIdx: 0 = primary, 1 = secondary
   setHandTarget(position, rotation, handIdx = 0) {
     this._handPos[handIdx].copy(position);
-    // Primary hand drives the particle object
-    if (handIdx === 0) {
-      this.particleObject.setHandTarget(position);
-    }
-    // Secondary hand could drive a second object in future
+    if (handIdx === 0) this.particleObject.setHandTarget(position);
   }
 
   clearHandTarget(handIdx = 0) {
     if (handIdx === 0) this.particleObject.clearHand();
   }
 
-  // ── Gesture-driven actions ────────────────────────────────
   triggerDestruction() {
     this.particleObject.triggerDestruction();
-    this.effects.triggerShake(0.18, 0.4);         // subtle shake
-    this.effects.triggerBloomBoost(0.5, 0.7);     // brief gentle bloom
+    this.effects.triggerShake(0.22, 0.5);
+    this.effects.triggerBloomBoost(0.7, 0.8);
   }
 
   spawnText()   { this.textSystem.spawn(); }
   removeText()  { this.textSystem.remove(); }
   changeText()  { this.textSystem.changeText(); }
+
+  // Set shape by name (saturn, love, dragon, sphere)
+  setShape(name) {
+    this.particleObject.setShape(name);
+    return this.particleObject.getShapeName();
+  }
 
   nextShape() {
     this.particleObject.nextShape();
@@ -147,8 +142,8 @@ export class SceneManager {
     return this.particleObject.getShapeName();
   }
   getShapeName() { return this.particleObject.getShapeName(); }
+  getShapeKey()  { return this.particleObject.getShapeKey(); }
 
-  // ── Render ────────────────────────────────────────────────
   update() {
     const delta = Math.min(this.clock.getDelta(), 0.05);
     const anchor = this._handPos[0];

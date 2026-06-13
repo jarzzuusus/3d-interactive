@@ -1,23 +1,5 @@
 // ============================================================
-// particleSystem.js  (full rework v2)
-//
-// SHAPES  (cycle with POINT / CALL gesture):
-//   0 — Saturn   : sphere + flat ring
-//   1 — Love     : heart / love shape
-//   2 — Dragon   : coiling helix / serpentine form
-//   3 — Sphere   : plain sphere fallback
-//
-// STATES:
-//   scattered   — particles drifting randomly (no hand)
-//   gathering   — hand detected, pulling toward current shape
-//   gathered    — hand present, holding formation
-//   releasing   — hand lost, drift back
-//   dissolving  — PALM→FIST smooth dissolve
-//   reforming   — after dissolve, pieces drift and re-gather
-//
-// WIND / TAIL:
-//   Each particle has a `lag` value (0–1). Slow-lag particles
-//   trail behind the hand motion → organic comet tail.
+// particleSystem.js  (v3 — 3D Saturn ring, improved shapes)
 // ============================================================
 
 import * as THREE from "three";
@@ -31,19 +13,18 @@ function noise3(x, y, z, t) {
 }
 
 // ── Shape generators ──────────────────────────────────────────
-// Each returns an array of {x,y,z} offsets forming the shape.
 
 function genSaturn(count) {
   const pts = [];
-  const sphere = Math.floor(count * 0.65);
+  const sphere = Math.floor(count * 0.55);
   const ring   = count - sphere;
 
-  // Sphere shell (Fibonacci)
+  // Fibonacci sphere shell
   for (let i = 0; i < sphere; i++) {
     const idx = i + 0.5;
     const phi   = Math.acos(1 - 2 * idx / sphere);
     const theta = Math.PI * (1 + Math.sqrt(5)) * idx;
-    const r = 1.1 + (Math.random() - 0.5) * 0.25;
+    const r = 1.0 + (Math.random() - 0.5) * 0.22;
     pts.push({
       x: r * Math.sin(phi) * Math.cos(theta),
       y: r * Math.sin(phi) * Math.sin(theta),
@@ -51,19 +32,38 @@ function genSaturn(count) {
     });
   }
 
-  // Flat ring around equator (tilted ~20 deg)
-  const tilt = 0.34; // radians
+  // 3D RING: multiple concentric bands with thickness & tilt
+  const tiltX = 0.42; // ~24 degrees tilt
+  const tiltZ = 0.12;
   for (let i = 0; i < ring; i++) {
-    const a = (i / ring) * Math.PI * 2;
-    const rr = 1.8 + (Math.random() - 0.5) * 0.5;
+    const a   = (i / ring) * Math.PI * 2;
+    // Multiple bands: inner, middle, outer
+    const bandRand = Math.random();
+    let rr;
+    if (bandRand < 0.2)       rr = 1.45 + Math.random() * 0.12; // inner (sparse)
+    else if (bandRand < 0.7)  rr = 1.65 + Math.random() * 0.25; // main band
+    else                       rr = 1.98 + Math.random() * 0.18; // outer halo
+
+    // Ring has real 3D thickness (not just flat)
+    const thick = (Math.random() - 0.5) * 0.22;
     const x0 = rr * Math.cos(a);
-    const z0 = rr * Math.sin(a) * 0.18; // flat
-    const y0 = (Math.random() - 0.5) * 0.12;
-    // Tilt ring around X axis
+    const z0 = rr * Math.sin(a);
+    const y0 = thick;
+
+    // Apply tilt via rotation matrix (around X then Z)
+    const cy = Math.cos(tiltX), sy = Math.sin(tiltX);
+    const cz = Math.cos(tiltZ), sz = Math.sin(tiltZ);
+
+    // Rotate around X axis
+    const x1 = x0;
+    const y1 = y0 * cy - z0 * sy;
+    const z1 = y0 * sy + z0 * cy;
+
+    // Rotate around Z axis
     pts.push({
-      x: x0,
-      y: y0 * Math.cos(tilt) - z0 * Math.sin(tilt),
-      z: y0 * Math.sin(tilt) + z0 * Math.cos(tilt),
+      x: x1 * cz - y1 * sz,
+      y: x1 * sz + y1 * cz,
+      z: z1,
     });
   }
   return pts;
@@ -72,17 +72,13 @@ function genSaturn(count) {
 function genHeart(count) {
   const pts = [];
   for (let i = 0; i < count; i++) {
-    // Parametric heart on XY plane, with depth
     const t = (i / count) * Math.PI * 2;
-    // Heart curve
     const hx = 16 * Math.pow(Math.sin(t), 3);
     const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
-    // Scale down to fit ~1.5 units
     const scale = 0.095;
-    // Fill volume: scatter around surface
-    const nx = hx * scale + (Math.random() - 0.5) * 0.18;
-    const ny = hy * scale + (Math.random() - 0.5) * 0.18;
-    const nz = (Math.random() - 0.5) * 0.35;
+    const nx = hx * scale + (Math.random() - 0.5) * 0.22;
+    const ny = hy * scale + (Math.random() - 0.5) * 0.22;
+    const nz = (Math.random() - 0.5) * 0.45;
     pts.push({ x: nx, y: ny - 0.2, z: nz });
   }
   return pts;
@@ -90,25 +86,34 @@ function genHeart(count) {
 
 function genDragon(count) {
   const pts = [];
-  // Coiled helix / serpent body
-  const segments = count;
-  for (let i = 0; i < segments; i++) {
-    const t = (i / segments) * Math.PI * 6; // 3 full coils
-    const progress = i / segments;
-
-    // Body: tapers thinner toward the tail
-    const bodyRadius = 0.25 * (1 - progress * 0.7);
+  // Body
+  const bodyCount = Math.floor(count * 0.7);
+  for (let i = 0; i < bodyCount; i++) {
+    const t = (i / bodyCount) * Math.PI * 7;
+    const progress = i / bodyCount;
+    const bodyRadius = 0.28 * (1 - progress * 0.65);
     const phi = Math.random() * Math.PI * 2;
-
-    // Main spine curve
-    const spineX = Math.sin(t * 0.7) * (1.2 - progress * 0.3);
-    const spineY = (progress - 0.5) * 3.5;  // vertical elongation
-    const spineZ = Math.cos(t * 0.5) * 0.6;
-
+    const spineX = Math.sin(t * 0.6) * (1.3 - progress * 0.4);
+    const spineY = (progress - 0.5) * 3.8;
+    const spineZ = Math.cos(t * 0.45) * 0.7;
     pts.push({
       x: spineX + Math.cos(phi) * bodyRadius,
-      y: spineY + (Math.random() - 0.5) * 0.1,
+      y: spineY + (Math.random() - 0.5) * 0.12,
       z: spineZ + Math.sin(phi) * bodyRadius,
+    });
+  }
+  // Wings — fan out from upper body
+  const wingCount = count - bodyCount;
+  for (let i = 0; i < wingCount; i++) {
+    const side = i < wingCount / 2 ? 1 : -1;
+    const t = Math.random();
+    const ww = 1.1 + t * 1.2;
+    const wh = (Math.random() - 0.5) * 1.5;
+    const wy = 0.4 + t * 0.8 + (Math.random() - 0.5) * 0.3;
+    pts.push({
+      x: side * ww,
+      y: wy,
+      z: wh * 0.4,
     });
   }
   return pts;
@@ -130,7 +135,14 @@ function genSphere(count) {
   return pts;
 }
 
-const SHAPES = ["saturn", "love", "dragon", "sphere"];
+export const SHAPES = ["saturn", "love", "dragon", "sphere"];
+export const SHAPE_NAMES_DISPLAY = {
+  saturn: "Saturn 🪐",
+  love:   "Love ❤️",
+  dragon: "Dragon 🐉",
+  sphere: "Sphere ⚪",
+};
+
 const SHAPE_GENERATORS = {
   saturn: genSaturn,
   love:   genHeart,
@@ -145,11 +157,9 @@ export class ParticleObject {
     this.count    = count;
     this.time     = 0;
 
-    // Current shape index
     this.shapeIdx  = 0;
     this.shapeName = SHAPES[0];
 
-    // Interaction state
     this.interactionState = "scattered";
     this.handPos     = new THREE.Vector3();
     this.prevHandPos = new THREE.Vector3();
@@ -158,57 +168,42 @@ export class ParticleObject {
     this.gatherTime  = 0;
     this.dissolveTime = 0;
 
-    // Per-particle data
     this.positions   = new Float32Array(count * 3);
-    this.scattered   = new Float32Array(count * 3);  // random home pos
-    this.shapeOff    = new Float32Array(count * 3);  // target offsets for current shape
+    this.scattered   = new Float32Array(count * 3);
+    this.shapeOff    = new Float32Array(count * 3);
     this.velocities  = new Float32Array(count * 3);
     this.phase       = new Float32Array(count);
     this.lag         = new Float32Array(count);
 
     const colors = new Float32Array(count * 3);
 
-    // Colour palette: soft neutrals, NOT neon
-    const colA = new THREE.Color(0x9fc8e8); // sky blue
-    const colB = new THREE.Color(0xc4aee0); // soft lavender
-    const colC = new THREE.Color(0xe8c0d5); // pale rose
+    // Shape-aware color palettes (updated on shape switch)
+    this._colorPalette = this._getPalette(this.shapeName);
+    this._colors = colors;
 
     for (let i = 0; i < count; i++) {
-      // Random scatter home
       this.scattered[i*3]   = (Math.random() - 0.5) * 22;
       this.scattered[i*3+1] = (Math.random() - 0.5) * 14;
       this.scattered[i*3+2] = (Math.random() - 0.5) * 10;
-
-      // Start at scatter positions
       this.positions[i*3]   = this.scattered[i*3];
       this.positions[i*3+1] = this.scattered[i*3+1];
       this.positions[i*3+2] = this.scattered[i*3+2];
-
       this.phase[i] = Math.random() * Math.PI * 2;
-      this.lag[i]   = 0.1 + Math.random() * 0.9; // 0=slowest tail, 1=fastest lead
-
-      const mix = Math.random();
-      const c = mix < 0.5
-        ? colA.clone().lerp(colB, mix * 2)
-        : colB.clone().lerp(colC, (mix - 0.5) * 2);
-      colors[i*3]   = c.r;
-      colors[i*3+1] = c.g;
-      colors[i*3+2] = c.b;
+      this.lag[i]   = 0.1 + Math.random() * 0.9;
     }
 
-    // Build initial shape offsets
+    this._applyColors(this.shapeName);
     this._buildShapeOffsets(this.shapeName);
 
-    // Three.js objects
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(this.positions, 3));
     geo.setAttribute("color",    new THREE.BufferAttribute(colors, 3));
 
     const mat = new THREE.PointsMaterial({
-      size:         0.06,
+      size:         0.065,
       vertexColors: true,
       transparent:  true,
-      opacity:      0.85,
+      opacity:      0.88,
       blending:     THREE.NormalBlending,
       depthWrite:   false,
       sizeAttenuation: true,
@@ -219,7 +214,30 @@ export class ParticleObject {
     scene.add(this.points);
   }
 
-  // ── Shape management ─────────────────────────────────────
+  _getPalette(name) {
+    switch(name) {
+      case "saturn": return [new THREE.Color(0xe8d5a0), new THREE.Color(0xc4a87a), new THREE.Color(0x9fc8e8)];
+      case "love":   return [new THREE.Color(0xff6b8a), new THREE.Color(0xff3366), new THREE.Color(0xffaacc)];
+      case "dragon": return [new THREE.Color(0xff6600), new THREE.Color(0xff2200), new THREE.Color(0xffaa00)];
+      case "sphere": return [new THREE.Color(0x9fc8e8), new THREE.Color(0xc4aee0), new THREE.Color(0xe8c0d5)];
+      default:       return [new THREE.Color(0x9fc8e8), new THREE.Color(0xc4aee0), new THREE.Color(0xe8c0d5)];
+    }
+  }
+
+  _applyColors(name) {
+    const [cA, cB, cC] = this._getPalette(name);
+    const colors = this._colors;
+    for (let i = 0; i < this.count; i++) {
+      const mix = Math.random();
+      const c = mix < 0.5
+        ? cA.clone().lerp(cB, mix * 2)
+        : cB.clone().lerp(cC, (mix - 0.5) * 2);
+      colors[i*3]   = c.r;
+      colors[i*3+1] = c.g;
+      colors[i*3+2] = c.b;
+    }
+    if (this.points) this.points.geometry.attributes.color.needsUpdate = true;
+  }
 
   _buildShapeOffsets(name) {
     const gen = SHAPE_GENERATORS[name] || genSphere;
@@ -231,21 +249,31 @@ export class ParticleObject {
     }
   }
 
+  _switchShape(name) {
+    this.shapeName = name;
+    this._buildShapeOffsets(name);
+    this._applyColors(name);
+  }
+
   nextShape() {
     this.shapeIdx  = (this.shapeIdx + 1) % SHAPES.length;
-    this.shapeName = SHAPES[this.shapeIdx];
-    this._buildShapeOffsets(this.shapeName);
+    this._switchShape(SHAPES[this.shapeIdx]);
   }
 
   prevShape() {
     this.shapeIdx  = (this.shapeIdx - 1 + SHAPES.length) % SHAPES.length;
-    this.shapeName = SHAPES[this.shapeIdx];
-    this._buildShapeOffsets(this.shapeName);
+    this._switchShape(SHAPES[this.shapeIdx]);
   }
 
-  getShapeName() { return this.shapeName; }
+  setShape(name) {
+    const idx = SHAPES.indexOf(name);
+    if (idx === -1) return;
+    this.shapeIdx = idx;
+    this._switchShape(name);
+  }
 
-  // ── Hand API ──────────────────────────────────────────────
+  getShapeName() { return SHAPE_NAMES_DISPLAY[this.shapeName] || this.shapeName; }
+  getShapeKey()  { return this.shapeName; }
 
   setHandTarget(position) {
     this.prevHandPos.copy(this.handPos);
@@ -271,27 +299,21 @@ export class ParticleObject {
     }
   }
 
-  // ── Destruction: smooth dissolve ─────────────────────────
-  // Palm → Fist: particles gently drift apart (not explode)
   triggerDestruction() {
     if (this.interactionState === "dissolving") return;
     this.interactionState = "dissolving";
     this.dissolveTime     = 0;
 
-    // Give each particle a soft random drift velocity
     for (let i = 0; i < this.count; i++) {
-      const spd = 0.4 + Math.random() * 1.2;  // much gentler than before
-      const vx  = (Math.random() - 0.5);
-      const vy  = (Math.random() - 0.5);
-      const vz  = (Math.random() - 0.5);
-      const len = Math.sqrt(vx*vx + vy*vy + vz*vz) || 1;
-      this.velocities[i*3]   = (vx/len) * spd;
-      this.velocities[i*3+1] = (vy/len) * spd;
-      this.velocities[i*3+2] = (vz/len) * spd;
+      // Burst outward from current position + some spiral
+      const spd = 0.8 + Math.random() * 2.5;
+      const angle = Math.random() * Math.PI * 2;
+      const elev  = (Math.random() - 0.5) * Math.PI;
+      this.velocities[i*3]   = Math.cos(elev) * Math.cos(angle) * spd;
+      this.velocities[i*3+1] = Math.sin(elev) * spd;
+      this.velocities[i*3+2] = Math.cos(elev) * Math.sin(angle) * spd;
     }
   }
-
-  // ── Main update ───────────────────────────────────────────
 
   update(delta) {
     this.time += delta;
@@ -299,7 +321,6 @@ export class ParticleObject {
     const pos = this.positions;
     const t   = this.time;
 
-    // ── Gathering / Gathered ──────────────────────────────
     if (this.interactionState === "gathering" || this.interactionState === "gathered") {
       this.gatherTime += delta;
       if (this.gatherTime > 0.5) this.interactionState = "gathered";
@@ -313,13 +334,11 @@ export class ParticleObject {
         const lag = this.lag[i];
         const ox = this.shapeOff[i*3], oy = this.shapeOff[i*3+1], oz = this.shapeOff[i*3+2];
 
-        // Gentle breathing noise
         const amp = 0.1;
         const nx = noise3(ox, oy, oz, t*0.5+ph) * amp;
         const ny = noise3(oy, oz, ox, t*0.5+ph) * amp;
         const nz = noise3(oz, ox, oy, t*0.5+ph) * amp;
 
-        // Tail: slow particles pushed back opposite to hand movement
         const tail = speed * (1 - lag) * 2.5;
         const tx = this.handPos.x + ox + nx + tailDir.x * tail;
         const ty = this.handPos.y + oy + ny + tailDir.y * tail;
@@ -331,7 +350,6 @@ export class ParticleObject {
         pos[i*3+2] += (tz - pos[i*3+2]) * Math.min(1, k * delta);
       }
 
-    // ── Releasing ─────────────────────────────────────────
     } else if (this.interactionState === "releasing") {
       for (let i = 0; i < this.count; i++) {
         const ph  = this.phase[i];
@@ -347,7 +365,6 @@ export class ParticleObject {
         pos[i*3+2] += (sz+wz - pos[i*3+2]) * Math.min(1, k * delta);
       }
 
-      // Check if settled (sample 30 particles)
       let settled = true;
       for (let j = 0; j < 30; j++) {
         const i = Math.floor(Math.random() * this.count);
@@ -357,7 +374,6 @@ export class ParticleObject {
       }
       if (settled) this.interactionState = "scattered";
 
-    // ── Scattered (idle, no hand) ─────────────────────────
     } else if (this.interactionState === "scattered") {
       for (let i = 0; i < this.count; i++) {
         const ph = this.phase[i];
@@ -371,20 +387,17 @@ export class ParticleObject {
         pos[i*3+2] += (sz+nz - pos[i*3+2]) * Math.min(1, 1.4 * delta);
       }
 
-    // ── Dissolving (smooth drift-apart) ──────────────────
     } else if (this.interactionState === "dissolving") {
       this.dissolveTime += delta;
-      const dProg = Math.min(this.dissolveTime / 2.2, 1); // 2.2s total dissolve
+      const dProg = Math.min(this.dissolveTime / 2.0, 1);
 
       for (let i = 0; i < this.count; i++) {
         const ph = this.phase[i];
-        // Slow drag on velocity
-        this.velocities[i*3]   *= 0.97;
-        this.velocities[i*3+1] *= 0.97;
-        this.velocities[i*3+2] *= 0.97;
+        this.velocities[i*3]   *= 0.96;
+        this.velocities[i*3+1] *= 0.96;
+        this.velocities[i*3+2] *= 0.96;
 
-        // Add gentle swirling turbulence so it looks like smoke
-        const turb = 0.15 * (1 - dProg);
+        const turb = 0.2 * (1 - dProg);
         this.velocities[i*3]   += noise3(pos[i*3], pos[i*3+1], pos[i*3+2], t*1.2+ph) * turb * delta;
         this.velocities[i*3+1] += noise3(pos[i*3+1], pos[i*3+2], pos[i*3], t*1.1+ph) * turb * delta;
         this.velocities[i*3+2] += noise3(pos[i*3+2], pos[i*3], pos[i*3+1], t*0.9+ph) * turb * delta;
@@ -394,7 +407,6 @@ export class ParticleObject {
         pos[i*3+2] += this.velocities[i*3+2] * delta;
       }
 
-      // After dissolve finishes, scatter back
       if (dProg >= 1) {
         this.interactionState = "releasing";
         this.handPresent = false;
